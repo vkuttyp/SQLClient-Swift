@@ -1,5 +1,5 @@
-#ifndef CSYBDB_H
-#define CSYBDB_H
+#ifndef CFREETDS_H
+#define CFREETDS_H
 
 #ifdef __APPLE__
 #include "/opt/homebrew/opt/freetds/include/sybdb.h"
@@ -9,4 +9,4 @@
 #include <sybfront.h>
 #endif
 
-#endif /* CSYBDB_H */
+#endif /* CFREETDS_H */

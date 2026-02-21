@@ -1,0 +1,4 @@
+module CFreeTDS [system] {
+    header "include/CFreeTDS.h"
+    export *
+}

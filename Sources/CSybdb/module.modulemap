@@ -1,4 +1,0 @@
-module CSybdb {
-    header "include/CSybdb.h"
-    export *
-}
