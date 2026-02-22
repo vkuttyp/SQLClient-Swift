@@ -192,7 +192,54 @@ public actor SQLClient {
 
     // MARK: - Synchronous Helpers
 
+    private nonisolated func checkReachability(server: String, port: UInt16) throws {
+        let host = CFHostCreateWithName(nil, server as CFString).takeRetainedValue()
+        var error = CFStreamError()
+        CFHostStartInfoResolution(host, .addresses, &error)
+        
+        guard error.error == 0 else {
+            throw SQLClientError.connectionFailed(server: server)
+        }
+
+        // Attempt a TCP connection with a 5 second timeout
+        var readStream:  Unmanaged<CFReadStream>?
+        var writeStream: Unmanaged<CFWriteStream>?
+        CFStreamCreatePairWithSocketToHost(nil, server as CFString, UInt32(port), &readStream, &writeStream)
+
+        guard let read  = readStream?.takeRetainedValue(),
+            let write = writeStream?.takeRetainedValue() else {
+            throw SQLClientError.connectionFailed(server: server)
+        }
+
+        CFReadStreamOpen(read)
+        CFWriteStreamOpen(write)
+
+        let deadline = Date().addingTimeInterval(5)
+        var connected = false
+
+        while Date() < deadline {
+            let readStatus  = CFReadStreamGetStatus(read)
+            let writeStatus = CFWriteStreamGetStatus(write)
+            if readStatus == .open && writeStatus == .open {
+                connected = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        CFReadStreamClose(read)
+        CFWriteStreamClose(write)
+
+        guard connected else {
+            throw SQLClientError.connectionFailed(server: server)
+        }
+    }
+
     private nonisolated func _connectSync(options: SQLClientConnectionOptions) throws -> (login: TDSHandle, connection: TDSHandle) {
+        // Pre-flight — fail fast if the server isn't reachable at the TCP level.
+        // Default port for SQL Server is 1433.
+        try checkReachability(server: options.server, port: options.port ?? 1433)
+        
         dbinit()
         dberrhandle(SQLClient_errorHandler)
         dbmsghandle(SQLClient_messageHandler)
