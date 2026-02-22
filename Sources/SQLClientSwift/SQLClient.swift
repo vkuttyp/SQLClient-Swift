@@ -138,10 +138,8 @@ public actor SQLClient {
         try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database))
     }
 
-    public func connect(options: SQLClientConnectionOptions) async throws {
-        guard !connected else { throw SQLClientError.alreadyConnected }
-        
-        try await checkReachability(server: options.server, port: options.port ?? 1433)
+   public func connect(options: SQLClientConnectionOptions) async throws {
+    guard !connected else { throw SQLClientError.alreadyConnected }
         
         let result = try await runBlocking {
             return try self._connectSync(options: options)
@@ -194,9 +192,12 @@ public actor SQLClient {
 
     // MARK: - Synchronous Helpers
 
-    // try await checkReachability(server: options.server, port: options.port ?? 1433)
+// MARK: - Reachability
 
-private func checkReachability(server: String, port: UInt16) async throws {
+    /// Optional pre-flight TCP check. Call this before connect() if you want
+    /// to fail fast with a clear error instead of waiting for FreeTDS to time out.
+    /// Not called automatically — integrate tests and CI skip it safely this way.
+    public func checkReachability(server: String, port: UInt16 = 1433) async throws {
     try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
         Thread.detachNewThread {
             var readStream:  Unmanaged<CFReadStream>?
