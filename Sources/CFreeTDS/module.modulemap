@@ -1,4 +1,7 @@
-module CFreeTDS [system] {
-    header "include/CFreeTDS.h"
-    export *
-}
+#ifndef CFREETDS_H
+#define CFREETDS_H
+
+#include <sybfront.h>
+#include <sybdb.h>
+
+#endif
