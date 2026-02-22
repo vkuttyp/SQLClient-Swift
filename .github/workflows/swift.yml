@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     name: Build & Test
-    runs-on: macos-14
+    runs-on: macos-14        # Apple Silicon runner, Xcode 15+
 
     steps:
       - name: Checkout
@@ -21,31 +21,40 @@ jobs:
       - name: Install FreeTDS
         run: brew install freetds
 
-      - name: Diagnose environment
+      - name: Create freetds.pc for pkg-config
+        # Homebrew's freetds does not ship a .pc file on macOS.
+        # We generate one from the known brew prefix so that SPM's
+        # systemLibrary target can resolve it via pkg-config.
         run: |
-          echo "=== which pkg-config ==="
-          which pkg-config || echo "NOT FOUND"
-          echo "=== pkg-config freetds ==="
-          pkg-config --cflags --libs freetds || echo "pkg-config freetds FAILED"
-          echo "=== PKG_CONFIG_PATH ==="
-          echo "${PKG_CONFIG_PATH:-empty}"
-          echo "=== .pc files ==="
-          find /opt/homebrew /usr/local -name "freetds.pc" 2>/dev/null || echo "no .pc file found"
-          echo "=== brew --prefix freetds ==="
-          brew --prefix freetds
-          echo "=== ls pkgconfig dirs ==="
-          ls /opt/homebrew/lib/pkgconfig/ 2>/dev/null | grep -i free || echo "none"
-          ls /usr/local/lib/pkgconfig/ 2>/dev/null | grep -i free || echo "none"
+          PREFIX=$(brew --prefix freetds)
+          PC_DIR=/opt/homebrew/lib/pkgconfig
+          mkdir -p "$PC_DIR"
+          cat > "$PC_DIR/freetds.pc" << PCEOF
+          prefix=$PREFIX
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: FreeTDS
+          Description: FreeTDS library
+          Version: 1.0
+          Libs: -L\${libdir} -lsybdb -liconv
+          Cflags: -I\${includedir}
+          PCEOF
+          echo "=== freetds.pc written ==="
+          cat "$PC_DIR/freetds.pc"
+          echo "=== pkg-config verify ==="
+          PKG_CONFIG_PATH="$PC_DIR" pkg-config --cflags --libs freetds
 
       - name: Build
         run: swift build -v
         env:
-          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
 
       - name: Test
         run: swift test -v
         env:
-          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
           HOST:     ${{ secrets.DB_HOST }}
           USERNAME: ${{ secrets.DB_USERNAME }}
           PASSWORD: ${{ secrets.DB_PASSWORD }}
