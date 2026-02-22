@@ -138,8 +138,8 @@ public actor SQLClient {
         try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database))
     }
 
-    public func connect(options: SQLClientConnectionOptions) async throws {
-        guard !connected else { throw SQLClientError.alreadyConnected }
+   public func connect(options: SQLClientConnectionOptions) async throws {
+    guard !connected else { throw SQLClientError.alreadyConnected }
         
         let result = try await runBlocking {
             return try self._connectSync(options: options)
@@ -191,6 +191,50 @@ public actor SQLClient {
     public var isConnected: Bool { connected }
 
     // MARK: - Synchronous Helpers
+
+// MARK: - Reachability
+
+    /// Optional pre-flight TCP check. Call this before connect() if you want
+    /// to fail fast with a clear error instead of waiting for FreeTDS to time out.
+    /// Not called automatically — integrate tests and CI skip it safely this way.
+    public func checkReachability(server: String, port: UInt16 = 1433) async throws {
+    try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+        Thread.detachNewThread {
+            var readStream:  Unmanaged<CFReadStream>?
+            var writeStream: Unmanaged<CFWriteStream>?
+            CFStreamCreatePairWithSocketToHost(
+                nil, server as CFString, UInt32(port),
+                &readStream, &writeStream
+            )
+            guard let read  = readStream?.takeRetainedValue(),
+                  let write = writeStream?.takeRetainedValue() else {
+                cont.resume(throwing: SQLClientError.connectionFailed(server: server))
+                return
+            }
+            CFReadStreamOpen(read)
+            CFWriteStreamOpen(write)
+
+            let deadline = Date().addingTimeInterval(5)
+            var connected = false
+            while Date() < deadline {
+                if CFReadStreamGetStatus(read)  == .open &&
+                   CFWriteStreamGetStatus(write) == .open {
+                    connected = true
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            CFReadStreamClose(read)
+            CFWriteStreamClose(write)
+
+            if connected {
+                cont.resume()
+            } else {
+                cont.resume(throwing: SQLClientError.connectionFailed(server: server))
+            }
+        }
+    }
+}
 
     private nonisolated func _connectSync(options: SQLClientConnectionOptions) throws -> (login: TDSHandle, connection: TDSHandle) {
         dbinit()
