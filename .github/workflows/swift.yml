@@ -18,20 +18,19 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Install FreeTDS
-        run: brew install freetds
+      - name: Install Dependencies
+        run: |
+          brew install freetds pkg-config
 
       - name: Build
         run: |
-          export PKG_CONFIG_PATH="$(brew --prefix freetds)/lib/pkgconfig:/opt/homebrew/lib/pkgconfig"
-          mkdir -p /opt/homebrew/lib/pkgconfig
-          cp ci/freetds.pc /opt/homebrew/lib/pkgconfig/freetds.pc
+          export PKG_CONFIG_PATH="${{ github.workspace }}/ci"
           echo "pkg-config check: $(pkg-config --cflags --libs freetds)"
           swift build -v
 
       - name: Test
         run: |
-          export PKG_CONFIG_PATH="$(brew --prefix freetds)/lib/pkgconfig:/opt/homebrew/lib/pkgconfig"
+          export PKG_CONFIG_PATH="${{ github.workspace }}/ci"
           swift test -v
         env:
           HOST:     ${{ secrets.DB_HOST }}
