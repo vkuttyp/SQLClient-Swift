@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: macos-14        # Apple Silicon runner, Xcode 15+
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install FreeTDS
+        run: brew install freetds
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test -v
+        env:
+          # Integration tests are skipped automatically when these are not set.
+          # To run them, add HOST / USERNAME / PASSWORD / DATABASE as
+          # GitHub Actions secrets (Settings → Secrets → Actions).
+          HOST:     ${{ secrets.DB_HOST }}
+          USERNAME: ${{ secrets.DB_USERNAME }}
+          PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DATABASE: ${{ secrets.DB_DATABASE }}

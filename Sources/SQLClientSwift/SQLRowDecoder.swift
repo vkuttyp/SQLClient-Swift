@@ -149,8 +149,13 @@ private struct SQLRowKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProto
     }
 
     private func cast<T>(_ key: Key) throws -> T {
+        // Validate key is in columns
         let value = try requireValue(for: key)
+
+        // Direct cast as type 
         if let v = value as? T { return v }
+        
+        // If type is NSNumber supported
         if let n = value as? NSNumber {
             switch T.self {
             case is Bool.Type:   return (n.boolValue)   as! T
@@ -169,14 +174,40 @@ private struct SQLRowKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProto
             default: break
             }
         }
+       // String → primitive conversions.
         if let s = value as? String {
             switch T.self {
-            case is Int.Type:    if let i = Int(s)    { return i as! T }
-            case is Double.Type: if let d = Double(s) { return d as! T }
-            case is Bool.Type:   return (["true","1","yes"].contains(s.lowercased())) as! T
+            case is Int.Type:
+                guard let i = Int(s) else {
+                    throw DecodingError.typeMismatch(T.self, .init(
+                        codingPath: codingPath + [key],
+                        debugDescription: "Cannot convert '\(s)' to Int for column '\(key.stringValue)'."))
+                }
+                return i as! T
+
+            case is Double.Type:
+                guard let d = Double(s) else {
+                    throw DecodingError.typeMismatch(T.self, .init(
+                        codingPath: codingPath + [key],
+                        debugDescription: "Cannot convert '\(s)' to Double for column '\(key.stringValue)'."))
+                }
+                return d as! T
+
+            case is Bool.Type:
+                switch s.lowercased() {
+                case "true",  "1", "yes": return true  as! T
+                case "false", "0", "no":  return false as! T
+                default:
+                    throw DecodingError.typeMismatch(T.self, .init(
+                        codingPath: codingPath + [key],
+                        debugDescription: "Cannot convert '\(s)' to Bool for column '\(key.stringValue)'. "
+                            + "Expected one of: true, false, 1, 0, yes, no."))
+                }
+
             default: break
             }
         }
+        // No Conversion path succeeded
         throw DecodingError.typeMismatch(T.self, .init(
             codingPath: codingPath + [key],
             debugDescription: "Expected \(T.self), got \(type(of: value)) for column '\(key.stringValue)'"))
