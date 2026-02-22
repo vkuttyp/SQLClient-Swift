@@ -17,7 +17,7 @@ let package = Package(
         .library(
             name: "SQLClientSwift",
             targets: ["SQLClientSwift"]
-        ),
+        )
     ],
 
     targets: [
@@ -27,10 +27,10 @@ let package = Package(
         // On macOS/iOS you still need to link libsybdb.a manually.
         .systemLibrary(
             name: "CFreeTDS",
-            pkgConfig: "freetds",           // resolved via `pkg-config freetds`
+            pkgConfig: "freetds",  // resolved via `pkg-config freetds`
             providers: [
-                .brew(["freetds"]),          // macOS: brew install freetds
-                .apt(["freetds-dev"]),       // Linux: apt install freetds-dev
+                .brew(["freetds"]),  // macOS: brew install freetds
+                .apt(["freetds-dev"]),  // Linux: apt install freetds-dev
             ]
         ),
 
@@ -39,14 +39,35 @@ let package = Package(
             name: "SQLClientSwift",
             dependencies: ["CFreeTDS"],
             path: "Sources/SQLClientSwift",
+            cSettings: [
+                // Added compiler flags to direct CC to look for freetds in both
+                // MacOS intel and MacOS Arm directories.
+                .unsafeFlags([
+                    "-I/opt/homebrew/opt/freetds/include/",  // Apple Silicon
+                    "-I/usr/local/opt/freetds/include/",  // Intel
+                ])
+            ],
             swiftSettings: [
-                // Enable strict concurrency checking (Swift 5.9+)
                 .enableExperimentalFeature("StrictConcurrency=complete"),
+                // Pass both Homebrew prefix locations to the C compiler so
+                // angle bracket includes in CFreeTDS.h resolve on both
+                // Intel (/usr/local) and Apple Silicon (/opt/homebrew) Macs.
+                // The compiler silently ignores paths that don't exist,
+                // so providing both is safe.
+                .unsafeFlags(
+                    [
+                        "-Xcc", "-I/opt/homebrew/opt/freetds/include/",  // Apple Silicon
+                        "-Xcc", "-I/usr/local/opt/freetds/include/",  // Intel
+                    ], .when(platforms: [.macOS])),
             ],
             linkerSettings: [
-                .unsafeFlags(["-L/opt/homebrew/opt/freetds/lib"], .when(platforms: [.macOS])),
+                .unsafeFlags(
+                    [
+                        "-L/opt/homebrew/opt/freetds/lib",  // Apple Silicon
+                        "-L/usr/local/opt/freetds/lib",  // Intel
+                    ], .when(platforms: [.macOS])),
                 .linkedLibrary("sybdb"),
-                .linkedLibrary("iconv", .when(platforms: [.macOS]))
+                .linkedLibrary("iconv", .when(platforms: [.macOS])),
             ]
         ),
 
@@ -56,7 +77,30 @@ let package = Package(
         .testTarget(
             name: "SQLClientSwiftTests",
             dependencies: ["SQLClientSwift"],
-            path: "Tests/SQLClientSwiftTests"
+            path: "Tests/SQLClientSwiftTests",
+            cSettings: [
+                .unsafeFlags([
+                    "-I/opt/homebrew/opt/freetds/include/",  // Apple Silicon
+                    "-I/usr/local/opt/freetds/include/",  // Intel
+                ])
+            ],
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency=complete"),
+                .unsafeFlags(
+                    [
+                        "-Xcc", "-I/opt/homebrew/opt/freetds/include/",  // Apple Silicon
+                        "-Xcc", "-I/usr/local/opt/freetds/include/",  // Intel
+                    ], .when(platforms: [.macOS])),
+            ],
+            linkerSettings: [
+                .unsafeFlags(
+                    [
+                        "-L/opt/homebrew/opt/freetds/lib",  // Apple Silicon
+                        "-L/usr/local/opt/freetds/lib",  // Intel
+                    ], .when(platforms: [.macOS])),
+                .linkedLibrary("sybdb"),
+                .linkedLibrary("iconv", .when(platforms: [.macOS])),
+            ]
         ),
     ]
 )
