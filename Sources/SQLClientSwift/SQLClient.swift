@@ -134,13 +134,8 @@ public actor SQLClient {
     private let queue = DispatchQueue(label: "com.sqlclient.serial")
     private var activeTask: Task<Void, Never>?
 
-    private func serialize<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
-        let newTask: Task<T, Error> = Task { [activeTask] in
-            _ = await activeTask?.result
-            return try await operation()
-        }
-        activeTask = Task { _ = await newTask.result }
-        return try await newTask.value
+    private func awaitPrevious() async {
+        _ = await activeTask?.result
     }
 
     public var maxTextSize: Int = 4096
@@ -153,7 +148,8 @@ public actor SQLClient {
     }
 
    public func connect(options: SQLClientConnectionOptions) async throws {
-    try await serialize {
+    await awaitPrevious()
+    let task = Task {
         guard !self.connected else { throw SQLClientError.alreadyConnected }
         
         let result = try await self.runBlocking {
@@ -164,10 +160,13 @@ public actor SQLClient {
         self.connection = result.connection.pointer
         self.connected = true
     }
+    activeTask = Task { _ = await task.result }
+    try await task.value
    }
 
     public func disconnect() async {
-        _ = try? await serialize {
+        await awaitPrevious()
+        let task = Task {
             guard self.connected else { return }
             let lgn = self.login.map { TDSHandle(pointer: $0) }
             let conn = self.connection.map { TDSHandle(pointer: $0) }
@@ -178,10 +177,13 @@ public actor SQLClient {
             self.connection = nil
             self.connected = false
         }
+        activeTask = Task { _ = await task.result }
+        _ = await task.result
     }
 
     public func execute(_ sql: String) async throws -> SQLClientResult {
-        try await serialize {
+        await awaitPrevious()
+        let task = Task {
             guard self.connected, let conn = self.connection else { throw SQLClientError.notConnected }
             guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
             let maxText = self.maxTextSize
@@ -191,6 +193,8 @@ public actor SQLClient {
                 return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
             }
         }
+        activeTask = Task { _ = await task.result }
+        return try await task.value
     }
 
     public func query(_ sql: String) async throws -> [SQLRow] { try await execute(sql).rows }
