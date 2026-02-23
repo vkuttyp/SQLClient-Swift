@@ -132,6 +132,16 @@ public actor SQLClient {
     public init() {}
 
     private let queue = DispatchQueue(label: "com.sqlclient.serial")
+    private var activeTask: Task<Void, Never>?
+
+    private func serialize<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        let newTask: Task<T, Error> = Task { [activeTask] in
+            _ = await activeTask?.result
+            return try await operation()
+        }
+        activeTask = Task { _ = await newTask.result }
+        return try await newTask.value
+    }
 
     public var maxTextSize: Int = 4096
     private var login:      OpaquePointer?
@@ -143,9 +153,10 @@ public actor SQLClient {
     }
 
    public func connect(options: SQLClientConnectionOptions) async throws {
-    guard !connected else { throw SQLClientError.alreadyConnected }
+    try await serialize {
+        guard !self.connected else { throw SQLClientError.alreadyConnected }
         
-        let result = try await runBlocking {
+        let result = try await self.runBlocking {
             return try self._connectSync(options: options)
         }
         
@@ -153,27 +164,32 @@ public actor SQLClient {
         self.connection = result.connection.pointer
         self.connected = true
     }
+   }
 
     public func disconnect() async {
-        guard connected else { return }
-        let lgn = self.login.map { TDSHandle(pointer: $0) }
-        let conn = self.connection.map { TDSHandle(pointer: $0) }
-        await runBlockingVoid {
-            self._disconnectSync(login: lgn, connection: conn)
+        _ = try? await serialize {
+            guard self.connected else { return }
+            let lgn = self.login.map { TDSHandle(pointer: $0) }
+            let conn = self.connection.map { TDSHandle(pointer: $0) }
+            await self.runBlockingVoid {
+                self._disconnectSync(login: lgn, connection: conn)
+            }
+            self.login = nil
+            self.connection = nil
+            self.connected = false
         }
-        self.login = nil
-        self.connection = nil
-        self.connected = false
     }
 
     public func execute(_ sql: String) async throws -> SQLClientResult {
-        guard connected, let conn = connection else { throw SQLClientError.notConnected }
-        guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
-        let maxText = self.maxTextSize
-        let handle = TDSHandle(pointer: conn)
-        
-        return try await runBlocking {
-            return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
+        try await serialize {
+            guard self.connected, let conn = self.connection else { throw SQLClientError.notConnected }
+            guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
+            let maxText = self.maxTextSize
+            let handle = TDSHandle(pointer: conn)
+            
+            return try await self.runBlocking {
+                return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
+            }
         }
     }
 
@@ -228,8 +244,8 @@ public actor SQLClient {
                 }
                 Thread.sleep(forTimeInterval: 0.1)
             }
-            CFReadStreamClose(read)
-            CFWriteStreamClose(write)
+            CFReadStreamOpen(read)
+            CFWriteStreamOpen(write)
 
             if connected {
                 cont.resume()
@@ -343,7 +359,7 @@ public actor SQLClient {
             return NSNumber(value: data.load(as: Double.self))
         case 50, 104: // SYBBIT, SYBBITN
             return NSNumber(value: data.load(as: UInt8.self) != 0)
-        case 47, 39, 102, 103, 35, 99, 241: // SYBCHAR, SYBVARCHAR, SYBNCHAR, SYBNVARCHAR, SYBTEXT, SYBNTEXT, SYBXML
+        case 47, 39, 102, 103, 35, 99, 241: // SYBCHAR, SYBVARCHAR, SYBTEXT, SYBNTEXT, SYBXML, SYBNCHAR, SYBNVARCHAR
             let buf = UnsafeBufferPointer<UInt8>(start: data.assumingMemoryBound(to: UInt8.self), count: Int(len))
             return String(bytes: buf, encoding: .utf8) ?? String(bytes: buf, encoding: .windowsCP1252) ?? ""
         case 45, 37, 34, 173, 174, 167: // SYBBINARY, SYBVARBINARY, SYBIMAGE, SYBBIGBINARY, SYBBIGVARBINARY, SYBBLOB
@@ -360,7 +376,6 @@ public actor SQLClient {
             memcpy(&bytes, dataPtr, 16)
             
             // SQL Server UniqueIdentifier mixed-endian -> RFC 4122 Big-Endian
-            // Data1 (4 bytes), Data2 (2 bytes), Data3 (2 bytes) are little-endian in TDS
             let swapped: [UInt8] = [
                 bytes[3], bytes[2], bytes[1], bytes[0],
                 bytes[5], bytes[4],
