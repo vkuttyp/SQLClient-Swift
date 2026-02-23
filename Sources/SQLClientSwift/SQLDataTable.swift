@@ -42,7 +42,7 @@ public struct SQLDataColumn: Codable, Sendable {
 // MARK: - Cell Value
 
 /// A strongly-typed, Codable cell value preserving the original Swift type.
-public enum SQLCellValue: Codable, Sendable {
+public enum SQLCellValue: Codable, Sendable, Equatable {
     case null
     case string(String)
     case int16(Int16)

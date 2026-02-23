@@ -456,7 +456,7 @@ final class SQLClientSwiftTests: XCTestCase {
         // Use a temp table with a named result via a stored proc isn't feasible here,
         // so we verify that name-based lookup works via asSQLDataSet with a named table.
         let result = try await client.execute("SELECT 42 AS Val")
-        var ds = result.asSQLDataSet()
+        let ds = result.asSQLDataSet()
         // The first table has no name by convention; rename via re-init for test purposes.
         // Instead, test that subscript by non-existent name returns nil gracefully.
         XCTAssertNil(ds["NonExistent"])
