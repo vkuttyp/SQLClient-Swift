@@ -141,6 +141,11 @@ public actor SQLClient {
     }
 
     private let queue = DispatchQueue(label: "com.sqlclient.serial")
+    private var activeTask: Task<Void, Never>?
+
+    private func awaitPrevious() async {
+        _ = await activeTask?.result
+    }
 
     public var maxTextSize: Int = 4096
     private var login:      OpaquePointer?
@@ -152,11 +157,19 @@ public actor SQLClient {
     }
 
    public func connect(options: SQLClientConnectionOptions) async throws {
-    guard !connected else { throw SQLClientError.alreadyConnected }
+    await awaitPrevious()
     
-    let result = try await self.runBlocking {
-        return try self._connectSync(options: options)
-    }
+    guard !self.connected else { throw SQLClientError.alreadyConnected }
+    
+    let result: (login: TDSHandle, connection: TDSHandle) = try await {
+        let task: Task<(login: TDSHandle, connection: TDSHandle), Error> = Task {
+            return try await self.runBlocking {
+                return try self._connectSync(options: options)
+            }
+        }
+        activeTask = Task { _ = await task.result }
+        return try await task.value
+    }()
     
     self.login = result.login.pointer
     self.connection = result.connection.pointer
@@ -164,13 +177,19 @@ public actor SQLClient {
    }
 
     public func disconnect() async {
-        guard connected else { return }
+        await awaitPrevious()
+        
+        guard self.connected else { return }
         let lgn = self.login.map { TDSHandle(pointer: $0) }
         let conn = self.connection.map { TDSHandle(pointer: $0) }
         
-        await self.runBlockingVoid {
-            self._disconnectSync(login: lgn, connection: conn)
+        let task: Task<Void, Never> = Task {
+            await self.runBlockingVoid {
+                self._disconnectSync(login: lgn, connection: conn)
+            }
         }
+        activeTask = task
+        await task.value
         
         self.login = nil
         self.connection = nil
@@ -178,14 +197,20 @@ public actor SQLClient {
     }
 
     public func execute(_ sql: String) async throws -> SQLClientResult {
-        guard connected, let conn = connection else { throw SQLClientError.notConnected }
+        await awaitPrevious()
+        
+        guard self.connected, let conn = self.connection else { throw SQLClientError.notConnected }
         guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
         let maxText = self.maxTextSize
         let handle = TDSHandle(pointer: conn)
         
-        return try await self.runBlocking {
-            return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
+        let task: Task<SQLClientResult, Error> = Task {
+            return try await self.runBlocking {
+                return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
+            }
         }
+        activeTask = Task { _ = await task.result }
+        return try await task.value
     }
 
     public func query(_ sql: String) async throws -> [SQLRow] { try await execute(sql).rows }
@@ -239,8 +264,8 @@ public actor SQLClient {
                 }
                 Thread.sleep(forTimeInterval: 0.1)
             }
-            CFReadStreamClose(read)
-            CFWriteStreamClose(write)
+            CFReadStreamOpen(read)
+            CFWriteStreamOpen(write)
 
             if connected {
                 cont.resume()

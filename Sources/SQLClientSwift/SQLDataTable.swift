@@ -383,7 +383,7 @@ extension SQLClientResult {
                     guard let raw = sqlRow[col.name] else { return .null }
                     // If we have FreeTDS type for this row/column, use it
                     if let tdsType = sqlRow.columnTypes[col.name] {
-                        let val: Sendable = (raw as AnyObject) as! Sendable
+                        let val: Sendable = raw as AnyObject
                         return SQLCellValue.from(raw: val, freeTDSType: tdsType)
                     }
                     return cellValueFromAny(raw, columnType: col.type)
