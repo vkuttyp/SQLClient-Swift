@@ -141,17 +141,6 @@ public actor SQLClient {
     }
 
     private let queue = DispatchQueue(label: "com.sqlclient.serial")
-    private var activeTask: Task<Void, Never>?
-
-    private func serialize<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
-        let previousTask = activeTask
-        let newTask: Task<T, Error> = Task {
-            _ = await previousTask?.result
-            return try await operation()
-        }
-        activeTask = Task { _ = await newTask.result }
-        return try await newTask.value
-    }
 
     public var maxTextSize: Int = 4096
     private var login:      OpaquePointer?
@@ -163,43 +152,39 @@ public actor SQLClient {
     }
 
    public func connect(options: SQLClientConnectionOptions) async throws {
-    try await serialize {
-        guard !self.connected else { throw SQLClientError.alreadyConnected }
-        
-        let result = try await self.runBlocking {
-            return try self._connectSync(options: options)
-        }
-        
-        self.login = result.login.pointer
-        self.connection = result.connection.pointer
-        self.connected = true
+    guard !connected else { throw SQLClientError.alreadyConnected }
+    
+    let result = try await self.runBlocking {
+        return try self._connectSync(options: options)
     }
+    
+    self.login = result.login.pointer
+    self.connection = result.connection.pointer
+    self.connected = true
    }
 
     public func disconnect() async {
-        _ = try? await serialize {
-            guard self.connected else { return }
-            let lgn = self.login.map { TDSHandle(pointer: $0) }
-            let conn = self.connection.map { TDSHandle(pointer: $0) }
-            await self.runBlockingVoid {
-                self._disconnectSync(login: lgn, connection: conn)
-            }
-            self.login = nil
-            self.connection = nil
-            self.connected = false
+        guard connected else { return }
+        let lgn = self.login.map { TDSHandle(pointer: $0) }
+        let conn = self.connection.map { TDSHandle(pointer: $0) }
+        
+        await self.runBlockingVoid {
+            self._disconnectSync(login: lgn, connection: conn)
         }
+        
+        self.login = nil
+        self.connection = nil
+        self.connected = false
     }
 
     public func execute(_ sql: String) async throws -> SQLClientResult {
-        try await serialize {
-            guard self.connected, let conn = self.connection else { throw SQLClientError.notConnected }
-            guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
-            let maxText = self.maxTextSize
-            let handle = TDSHandle(pointer: conn)
-            
-            return try await self.runBlocking {
-                return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
-            }
+        guard connected, let conn = connection else { throw SQLClientError.notConnected }
+        guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
+        let maxText = self.maxTextSize
+        let handle = TDSHandle(pointer: conn)
+        
+        return try await self.runBlocking {
+            return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
         }
     }
 
@@ -274,7 +259,8 @@ public actor SQLClient {
         dbsetlname(lgn, "SQLClientSwift", 5) // DBSETAPP
         
         // Ensure we get UTF-8 from the server for N-types
-        dbsetlcharset(lgn, "UTF-8")
+        // index 7 is DBSETCHARSET
+        dbsetlname(lgn, "UTF-8", 7)
 
         if let port = options.port { dbsetlshort(lgn, Int32(port), 13) } // DBSETPORT
         if options.encryption != .request { dbsetlname(lgn, options.encryption.rawValue, 17) } // DBSETENCRYPTION
@@ -398,7 +384,8 @@ public actor SQLClient {
                 bytes[3], bytes[2], bytes[1], bytes[0],
                 bytes[5], bytes[4],
                 bytes[7], bytes[6],
-                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+                bytes[8], bytes[9],
+                bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
             ]
             return NSUUID(uuidBytes: swapped) as UUID
         case 31: // SYBVOID
