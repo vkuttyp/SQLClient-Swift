@@ -88,11 +88,11 @@ public struct SQLRow: Sendable {
     
     public var columns: [String] { storage.map(\.key) }
     
-    public subscript(column: String) -> Any? {
+    public subscript(column: String) -> Sendable? {
         storage.first(where: { $0.key == column })?.value
     }
     
-    public subscript(index: Int) -> Any? {
+    public subscript(index: Int) -> Sendable? {
         guard index >= 0 && index < storage.count else { return nil }
         return storage[index].value
     }
@@ -109,7 +109,11 @@ public struct SQLRow: Sendable {
     public func isNull(_ column: String)  -> Bool     { self[column] is NSNull }
     
     public func toDictionary() -> [String: Any] {
-        Dictionary(uniqueKeysWithValues: storage)
+        var dict: [String: Any] = [:]
+        for item in storage {
+            dict[item.key] = item.value
+        }
+        return dict
     }
 }
 
@@ -314,7 +318,6 @@ public actor SQLClient {
     private nonisolated func _disconnectSync(login: TDSHandle?, connection: TDSHandle?) {
         if let c = connection?.pointer { dbclose(c) }
         if let l = login?.pointer { dbloginfree(l) }
-        dbexit()
     }
 
     private nonisolated func _executeSync(sql: String, connection: TDSHandle, maxTextSize: Int) throws -> SQLClientResult {
@@ -346,7 +349,11 @@ public actor SQLClient {
                     colMeta.append((name: name, type: type))
                     columnTypes[name] = type
                 }
-                while dbnextrow(conn) != NO_MORE_ROWS {
+                while true {
+                    let rowCode = dbnextrow(conn)
+                    if rowCode == NO_MORE_ROWS || rowCode == FAIL { break }
+                    if rowCode == BUF_FULL { continue }
+
                     var storage: [(key: String, value: Sendable)] = []
                     for (idx, col) in colMeta.enumerated() {
                         let colIdx = Int32(idx + 1)
@@ -372,15 +379,15 @@ public actor SQLClient {
         case 48: // SYBINT1
             return NSNumber(value: data.load(as: UInt8.self))
         case 52: // SYBINT2
-            return NSNumber(value: data.load(as: Int16.self))
+            return NSNumber(value: data.loadUnaligned(as: Int16.self))
         case 56: // SYBINT4
-            return NSNumber(value: data.load(as: Int32.self))
+            return NSNumber(value: data.loadUnaligned(as: Int32.self))
         case 127: // SYBINT8
-            return NSNumber(value: data.load(as: Int64.self))
+            return NSNumber(value: data.loadUnaligned(as: Int64.self))
         case 59: // SYBREAL
-            return NSNumber(value: data.load(as: Float.self))
+            return NSNumber(value: data.loadUnaligned(as: Float.self))
         case 62: // SYBFLT8
-            return NSNumber(value: data.load(as: Double.self))
+            return NSNumber(value: data.loadUnaligned(as: Double.self))
         case 50, 104: // SYBBIT, SYBBITN
             return NSNumber(value: data.load(as: UInt8.self) != 0)
         case 47, 39, 102, 103, 35, 99, 241: // SYBCHAR, SYBVARCHAR, SYBTEXT, SYBNTEXT, SYBXML, SYBNCHAR, SYBNVARCHAR
