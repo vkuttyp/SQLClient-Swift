@@ -288,15 +288,14 @@ public actor SQLClient {
         dbsetlname(lgn, "SQLClientSwift", 5) // DBSETAPP
         
         // Ensure we get UTF-8 from the server for N-types
-        // index 7 is DBSETCHARSET
-        dbsetlname(lgn, "UTF-8", 7)
+        dbsetlname(lgn, "UTF-8", 10) // DBSETCHARSET
 
-        if let port = options.port { dbsetlshort(lgn, Int32(port), 13) } // DBSETPORT
-        if options.encryption != .request { dbsetlname(lgn, options.encryption.rawValue, 17) } // DBSETENCRYPTION
-        dbsetlbool(lgn, options.useNTLMv2 ? 1 : 0, 16) // DBSETNTLMV2
-        if options.networkAuth { dbsetlbool(lgn, 1, 15) } // DBSETNETWORKAUTH
-        if options.readOnly { dbsetlbool(lgn, 1, 14) } // DBSETREADONLY
-        if options.useUTF16 { dbsetlbool(lgn, 1, 18) } // DBSETUTF16
+        if let port = options.port { dbsetlshort(lgn, Int32(port), 1006) } // DBSETPORT
+        if options.encryption != .request { dbsetlname(lgn, options.encryption.rawValue, 1005) } // DBSETENCRYPTION
+        dbsetlbool(lgn, options.useNTLMv2 ? 1 : 0, 1002) // DBSETNTLMV2
+        if options.networkAuth { dbsetlbool(lgn, 1, 101) } // DBSETNETWORKAUTH
+        if options.readOnly { dbsetlbool(lgn, 1, 1003) } // DBSETREADONLY
+        if options.useUTF16 { dbsetlbool(lgn, 1, 1001) } // DBSETUTF16
         if options.loginTimeout > 0 { dbsetlogintime(Int32(options.loginTimeout)) }
 
         guard let conn = dbopen(lgn, options.server) else {
