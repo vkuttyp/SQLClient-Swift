@@ -1,7 +1,12 @@
-# FreeTDS pkg-config file for macOS (Apple Silicon)
-# Committed to repo because Homebrew's freetds does not ship a .pc file on macOS.
+# FreeTDS pkg-config file for macOS
+# Homebrew's freetds does not ship a .pc file on macOS.
 # Linux users: this file is ignored; FreeTDS is found via system pkg-config.
+
+# --- PREFIX CONFIGURATION ---
+# Apple Silicon (M1/M2/M3): /opt/homebrew/opt/freetds
+# Intel Mac: /usr/local/opt/freetds
 prefix=/opt/homebrew/opt/freetds
+
 exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include

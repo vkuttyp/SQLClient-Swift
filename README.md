@@ -33,36 +33,17 @@ This is a Swift rewrite and modernisation of [martinrybak/SQLClient](https://git
 | tvOS | 16.0 |
 | Xcode | 15.0 |
 | Swift | 5.9 |
+| PKG-Config | 0.29+ (macOS) |
 | FreeTDS | 1.0 (1.5 recommended) |
 
 ---
 
 ## Installation
 
+> **Note for macOS:** If you encounter compilation errors like `'sybdb.h' file not found`, you need to configure `pkg-config` to correctly link your FreeTDS installation. See [PKG-Config Configuration](#pkg-config-configuration) below.
+
 ### Swift Package Manager
-
-Add the dependency to your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/vkuttyp/SQLClient-Swift.git", from: "1.0.0")
-],
-targets: [
-    .target(
-        name: "MyApp",
-        dependencies: [
-            .product(name: "SQLClientSwift", package: "SQLClient-Swift")
-        ]
-    )
-]
-```
-
-Or in Xcode: **File → Add Package Dependencies…** and enter the repository URL.
-
-### Install FreeTDS
-
-SQLClient-Swift wraps FreeTDS — you need the native library present at build time.
-
+...
 **macOS (Homebrew):**
 ```bash
 brew install freetds
@@ -74,6 +55,37 @@ sudo apt install freetds-dev
 ```
 
 **iOS / custom build:** Use a pre-compiled `libsybdb.a` (e.g. from [FreeTDS-iOS](https://github.com/patchhf/FreeTDS-iOS)) and link it manually in your Xcode target under **Build Phases → Link Binary With Libraries**, along with `libiconv.tbd`.
+
+### PKG-Config Configuration (macOS)
+
+For systems that do not natively include `pkg-config` or where Homebrew does not provide a `.pc` file for FreeTDS (common on macOS), extra steps are required.
+
+**1. Install pkg-config**
+
+```bash
+brew install pkg-config
+```
+
+**2. Configure freetds.pc**
+
+A `freetds.pc` file is provided in the `ci/` folder of this repository. You need to make this file available to `pkg-config`.
+
+**Option A: Export PKG_CONFIG_PATH (Recommended)**
+Point `pkg-config` to the `ci/` folder in your local copy of this repo:
+```bash
+export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:/path/to/SQLClient-Swift/ci"
+```
+
+**Option B: Copy to system path**
+Copy the file to your system's pkg-config directory:
+```bash
+cp ci/freetds.pc /usr/local/lib/pkgconfig/
+```
+
+**Note on Intel vs Apple Silicon:**
+The provided `ci/freetds.pc` is configured for Apple Silicon (`/opt/homebrew`). If you are on an **Intel Mac**, edit the `prefix` line in the file:
+- **Apple Silicon:** `prefix=/opt/homebrew/opt/freetds`
+- **Intel:** `prefix=/usr/local/opt/freetds`
 
 ---
 
