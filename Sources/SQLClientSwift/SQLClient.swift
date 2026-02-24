@@ -85,6 +85,7 @@ public struct SQLClientConnectionOptions: Sendable {
     public var username:     String
     public var password:     String
     public var database:     String?
+    public var domain:       String?
     public var port:         UInt16?
     public var encryption:   SQLClientEncryption = .request
     public var useNTLMv2:    Bool = true
@@ -94,11 +95,12 @@ public struct SQLClientConnectionOptions: Sendable {
     public var queryTimeout: Int  = 0
     public var loginTimeout: Int  = 0
 
-    public init(server: String, username: String, password: String, database: String? = nil) {
+    public init(server: String, username: String, password: String, database: String? = nil, domain: String? = nil) {
         self.server   = server
         self.username = username
         self.password = password
         self.database = database
+        self.domain   = domain
     }
 }
 
@@ -189,8 +191,8 @@ public actor SQLClient {
     private var connection: OpaquePointer?
     private var connected   = false
 
-    public func connect(server: String, username: String, password: String, database: String? = nil) async throws {
-        try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database))
+    public func connect(server: String, username: String, password: String, database: String? = nil, domain: String? = nil) async throws {
+        try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database, domain: domain))
     }
 
    public func connect(options: SQLClientConnectionOptions) async throws {
@@ -325,6 +327,8 @@ public actor SQLClient {
         
         // Ensure we get UTF-8 from the server for N-types
         dbsetlname(lgn, "UTF-8", 10) // DBSETCHARSET
+
+        if let domain = options.domain { dbsetlname(lgn, domain, 15) } // DBSETLDOMAIN
 
         if let port = options.port { dbsetlshort(lgn, Int32(port), 1006) } // DBSETPORT
         if options.encryption != .request { dbsetlname(lgn, options.encryption.rawValue, 1005) } // DBSETENCRYPTION
