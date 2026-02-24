@@ -33,11 +33,14 @@ This is a Swift rewrite and modernisation of [martinrybak/SQLClient](https://git
 | tvOS | 16.0 |
 | Xcode | 15.0 |
 | Swift | 5.9 |
+| PKG-Config | 0.29 (MacOS) |
 | FreeTDS | 1.0 (1.5 recommended) |
 
 ---
 
 ## Installation
+
+> NOTE: for MacOS Systems with compilation errors being emitted from the library. You need to configure PKG-Config to correctly link the FreeTDS installation. See [PKG-Config Configuration](#pkg-config-configuration).
 
 ### Swift Package Manager
 
@@ -74,6 +77,31 @@ sudo apt install freetds-dev
 ```
 
 **iOS / custom build:** Use a pre-compiled `libsybdb.a` (e.g. from [FreeTDS-iOS](https://github.com/patchhf/FreeTDS-iOS)) and link it manually in your Xcode target under **Build Phases → Link Binary With Libraries**, along with `libiconv.tbd`.
+
+### PKG-Config Configuration
+
+For systems which do not nativly include PKG-Config (MacOS). Extra steps are required when setting up the project for the first time. Firstly the install of PKG-Config, then the adding of an `.pc` file to allow for library resolution. 
+
+**Install PKG-config**
+
+Alongside the [installation of FreeTDS](#install-freetds) you will need to install PKG-Config. This can be done with the following command:
+
+```bash
+brew install pkg-config
+```
+
+This will install PKG-Config, which allows for automatic resolution of libraries for the project to link against. Otherwise, the system will not be able to resolve FreeTDS or its libraries. 
+
+**Package Contents File**
+
+PKG-Config uses `.pc` files to resolve libraries and link them when compiling source. A `freetds.pc` file is provided with the project which will allow PKG-Config to resolve your installation, fixing compile errors. 
+
+It is located at in the `ci` folder. This file must be copied to the package contents library for you pkg-config install. Usually it can be found at:
+
+```
+/usr/local/lib/pkgconfig/
+```
+Create a new `freetds.pc` file and copy the contents from the example provided **OR** Copy the file provided in the `ci` folder. 
 
 ---
 
