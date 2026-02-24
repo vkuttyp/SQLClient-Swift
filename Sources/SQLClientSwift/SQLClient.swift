@@ -83,7 +83,7 @@ public enum SQLClientEncryption: String, Sendable {
 public struct SQLClientConnectionOptions: Sendable {
     public var server:       String
     public var username:     String
-    public var password:     String
+    public var password:     String?
     public var database:     String?
     public var domain:       String?
     public var port:         UInt16?
@@ -95,7 +95,7 @@ public struct SQLClientConnectionOptions: Sendable {
     public var queryTimeout: Int  = 0
     public var loginTimeout: Int  = 0
 
-    public init(server: String, username: String, password: String, database: String? = nil, domain: String? = nil) {
+    public init(server: String, username: String, password: String? = nil, database: String? = nil, domain: String? = nil) {
         self.server   = server
         self.username = username
         self.password = password
@@ -191,7 +191,7 @@ public actor SQLClient {
     private var connection: OpaquePointer?
     private var connected   = false
 
-    public func connect(server: String, username: String, password: String, database: String? = nil, domain: String? = nil) async throws {
+    public func connect(server: String, username: String, password: String? = nil, database: String? = nil, domain: String? = nil) async throws {
         try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database, domain: domain))
     }
 
@@ -322,7 +322,9 @@ public actor SQLClient {
 
         if SQLClient.debugEnabled { print("DEBUG: _connectSync - setting login options") }
         dbsetlname(lgn, options.username, 2) // DBSETUSER
-        dbsetlname(lgn, options.password, 3) // DBSETPWD
+        if let password = options.password {
+            dbsetlname(lgn, password, 3) // DBSETPWD
+        }
         dbsetlname(lgn, "SQLClientSwift", 5) // DBSETAPP
         
         // Ensure we get UTF-8 from the server for N-types
