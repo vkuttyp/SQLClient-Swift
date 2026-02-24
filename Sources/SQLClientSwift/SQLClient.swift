@@ -82,7 +82,7 @@ public enum SQLClientEncryption: String, Sendable {
 
 public struct SQLClientConnectionOptions: Sendable {
     public var server:       String
-    public var username:     String
+    public var username:     String?
     public var password:     String?
     public var database:     String?
     public var domain:       String?
@@ -95,7 +95,7 @@ public struct SQLClientConnectionOptions: Sendable {
     public var queryTimeout: Int  = 0
     public var loginTimeout: Int  = 0
 
-    public init(server: String, username: String, password: String? = nil, database: String? = nil, domain: String? = nil) {
+    public init(server: String, username: String? = nil, password: String? = nil, database: String? = nil, domain: String? = nil) {
         self.server   = server
         self.username = username
         self.password = password
@@ -191,7 +191,7 @@ public actor SQLClient {
     private var connection: OpaquePointer?
     private var connected   = false
 
-    public func connect(server: String, username: String, password: String? = nil, database: String? = nil, domain: String? = nil) async throws {
+    public func connect(server: String, username: String? = nil, password: String? = nil, database: String? = nil, domain: String? = nil) async throws {
         try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database, domain: domain))
     }
 
@@ -321,7 +321,7 @@ public actor SQLClient {
         guard let lgn = dblogin() else { throw SQLClientError.loginAllocationFailed }
 
         if SQLClient.debugEnabled { print("DEBUG: _connectSync - setting login options") }
-        dbsetlname(lgn, options.username, 2) // DBSETUSER
+        dbsetlname(lgn, options.username ?? "", 2) // DBSETUSER (empty for trusted)
         if let password = options.password {
             dbsetlname(lgn, password, 3) // DBSETPWD
         }
