@@ -16,15 +16,32 @@ public enum SQLClientMessageKey {
     public static let severity = "severity"
 }
 
+// MARK: - Error Capture
+
+nonisolated(unsafe) private var lastFreeTDSError: String?
+private let lastErrorLock = NSLock()
+
+private func setLastFreeTDSError(_ msg: String) {
+    lastErrorLock.lock()
+    lastFreeTDSError = msg
+    lastErrorLock.unlock()
+}
+
+private func getLastFreeTDSError() -> String? {
+    lastErrorLock.lock()
+    defer { lastErrorLock.unlock() }
+    return lastFreeTDSError
+}
+
 // MARK: - Errors
 
 public enum SQLClientError: Error, LocalizedError {
     case alreadyConnected
     case notConnected
     case loginAllocationFailed
-    case connectionFailed(server: String)
-    case databaseSelectionFailed(String)
-    case executionFailed
+    case connectionFailed(server: String, detail: String? = nil)
+    case databaseSelectionFailed(String, detail: String? = nil)
+    case executionFailed(detail: String? = nil)
     case noCommandText
     case parameterCountMismatch
 
@@ -33,9 +50,19 @@ public enum SQLClientError: Error, LocalizedError {
         case .alreadyConnected:        return "Already connected to a server. Call disconnect() first."
         case .notConnected:            return "Not connected. Call connect() before executing queries."
         case .loginAllocationFailed:   return "FreeTDS could not allocate a login record."
-        case .connectionFailed(let s): return "Could not connect to '\(s)'."
-        case .databaseSelectionFailed(let db): return "Could not select database '\(db)'."
-        case .executionFailed:         return "SQL execution failed. Check SQLClientMessage notifications for details."
+        case .connectionFailed(let s, let d):
+            var msg = "Could not connect to '\(s)'."
+            if let d = d, !d.isEmpty { msg += " (\(d))" }
+            return msg
+        case .databaseSelectionFailed(let db, let d):
+            var msg = "Could not select database '\(db)'."
+            if let d = d, !d.isEmpty { msg += " (\(d))" }
+            return msg
+        case .executionFailed(let d):
+            var msg = "SQL execution failed."
+            if let d = d, !d.isEmpty { msg += " (\(d))" }
+            else { msg += " Check SQLClientMessage notifications for details." }
+            return msg
         case .noCommandText:           return "SQL command string was empty."
         case .parameterCountMismatch:  return "Number of parameters does not match number of placeholders."
         }
@@ -133,6 +160,12 @@ private struct TDSHandle: @unchecked Sendable {
 
 public actor SQLClient {
     public static let shared = SQLClient()
+    
+    /// Global debug flag, enabled via --debug argument or SQL_CLIENT_DEBUG env var.
+    public static let debugEnabled: Bool = {
+        ProcessInfo.processInfo.arguments.contains("--debug") ||
+        ProcessInfo.processInfo.environment["SQL_CLIENT_DEBUG"] != nil
+    }()
     
     private static let initializeFreeTDS: Void = {
         dbinit()
@@ -281,8 +314,11 @@ public actor SQLClient {
 }
 
     private nonisolated func _connectSync(options: SQLClientConnectionOptions) throws -> (login: TDSHandle, connection: TDSHandle) {
+        setLastFreeTDSError("")
+        if SQLClient.debugEnabled { print("DEBUG: _connectSync - dblogin()") }
         guard let lgn = dblogin() else { throw SQLClientError.loginAllocationFailed }
 
+        if SQLClient.debugEnabled { print("DEBUG: _connectSync - setting login options") }
         dbsetlname(lgn, options.username, 2) // DBSETUSER
         dbsetlname(lgn, options.password, 3) // DBSETPWD
         dbsetlname(lgn, "SQLClientSwift", 5) // DBSETAPP
@@ -298,16 +334,23 @@ public actor SQLClient {
         if options.useUTF16 { dbsetlbool(lgn, 1, 1001) } // DBSETUTF16
         if options.loginTimeout > 0 { dbsetlogintime(Int32(options.loginTimeout)) }
 
+        if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbopen(\(options.server))") }
         guard let conn = dbopen(lgn, options.server) else {
+            let detail = getLastFreeTDSError()
+            if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbopen failed: \(detail ?? "unknown")") }
             dbloginfree(lgn)
-            throw SQLClientError.connectionFailed(server: options.server)
+            throw SQLClientError.connectionFailed(server: options.server, detail: detail)
         }
+        if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbopen success") }
 
         if let db = options.database, !db.isEmpty {
+            if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbuse(\(db))") }
             guard dbuse(conn, db) != FAIL else {
+                let detail = getLastFreeTDSError()
+                if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbuse failed: \(detail ?? "unknown")") }
                 dbclose(conn)
                 dbloginfree(lgn)
-                throw SQLClientError.databaseSelectionFailed(db)
+                throw SQLClientError.databaseSelectionFailed(db, detail: detail)
             }
         }
         
@@ -320,6 +363,7 @@ public actor SQLClient {
     }
 
     private nonisolated func _executeSync(sql: String, connection: TDSHandle, maxTextSize: Int) throws -> SQLClientResult {
+        setLastFreeTDSError("")
         let conn = connection.pointer
         
         // Ensure any previous results are cancelled before a new command
@@ -327,7 +371,9 @@ public actor SQLClient {
         
         _ = dbsetopt(conn, DBTEXTSIZE, "\(maxTextSize)", -1)
         
-        guard dbcmd(conn, sql) != FAIL, dbsqlexec(conn) != FAIL else { throw SQLClientError.executionFailed }
+        guard dbcmd(conn, sql) != FAIL, dbsqlexec(conn) != FAIL else {
+            throw SQLClientError.executionFailed(detail: getLastFreeTDSError())
+        }
 
         var tables: [[SQLRow]] = []
         var totalAffected: Int = -1
@@ -529,7 +575,8 @@ public actor SQLClient {
 
 private func SQLClient_errorHandler(dbproc: OpaquePointer?, severity: Int32, dberr: Int32, oserr: Int32, dberrstr: UnsafeMutablePointer<CChar>?, oserrstr: UnsafeMutablePointer<CChar>?) -> Int32 {
     let msg = dberrstr.map { String(cString: $0) } ?? "Unknown FreeTDS error"
-    if ProcessInfo.processInfo.environment["SQL_CLIENT_DEBUG"] != nil {
+    setLastFreeTDSError("[\(dberr)] \(msg)")
+    if SQLClient.debugEnabled {
         print("DEBUG SQL Error: [\(dberr)] \(msg) (severity: \(severity))")
     }
     NotificationCenter.default.post(name: .SQLClientMessage, object: nil, userInfo: [SQLClientMessageKey.code: Int(dberr), SQLClientMessageKey.message: msg, SQLClientMessageKey.severity: Int(severity)])
@@ -538,7 +585,7 @@ private func SQLClient_errorHandler(dbproc: OpaquePointer?, severity: Int32, dbe
 
 private func SQLClient_messageHandler(dbproc: OpaquePointer?, msgno: DBINT, msgstate: Int32, severity: Int32, msgtext: UnsafeMutablePointer<CChar>?, srvname: UnsafeMutablePointer<CChar>?, proc: UnsafeMutablePointer<CChar>?, line: Int32) -> Int32 {
     let msg = msgtext.map { String(cString: $0) } ?? ""
-    if severity > 0 && ProcessInfo.processInfo.environment["SQL_CLIENT_DEBUG"] != nil {
+    if severity > 0 && SQLClient.debugEnabled {
         print("DEBUG SQL Message: [\(msgno)] \(msg) (severity: \(severity))")
     }
     NotificationCenter.default.post(name: .SQLClientMessage, object: nil, userInfo: [SQLClientMessageKey.code: Int(msgno), SQLClientMessageKey.message: msg, SQLClientMessageKey.severity: Int(severity)])
