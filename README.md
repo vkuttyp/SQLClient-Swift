@@ -1,5 +1,8 @@
 # SQLClient-Swift
 
+[![Swift Package Index](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fvkuttyp%2FSQLClient-Swift%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/vkuttyp/SQLClient-Swift)
+[![Swift Package Index](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fvkuttyp%2FSQLClient-Swift%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/vkuttyp/SQLClient-Swift)
+
 A modern, native **Microsoft SQL Server** client for **iOS**, **macOS**, and **Linux** — written in Swift.
 
 Built on top of the open-source [FreeTDS](https://www.freetds.org) library, SQLClient-Swift provides a clean `async/await` API, automatic `Decodable` row mapping, full TLS/encryption support for Azure SQL and SQL Server 2022, and thread safety via Swift's `actor` model.
