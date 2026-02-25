@@ -4,9 +4,7 @@ import PackageDescription
 let package = Package(
     name: "SQLClientSwift",
     platforms: [
-        .iOS(.v16),
         .macOS(.v13),
-        .tvOS(.v16),
     ],
     products: [
         .library(
