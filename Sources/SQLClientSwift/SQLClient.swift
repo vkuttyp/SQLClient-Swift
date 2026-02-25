@@ -277,6 +277,7 @@ public actor SQLClient {
     /// to fail fast with a clear error instead of waiting for FreeTDS to time out.
     /// Not called automatically — integrate tests and CI skip it safely this way.
     public func checkReachability(server: String, port: UInt16 = 1433) async throws {
+    #if os(iOS) || os(macOS) || os(tvOS) || os(visionOS)
     try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
         queue.async {
             var readStream:  Unmanaged<CFReadStream>?
@@ -313,6 +314,10 @@ public actor SQLClient {
             }
         }
     }
+    #else
+    // Reachability check not implemented for this platform.
+    return
+    #endif
 }
 
     private nonisolated func _connectSync(options: SQLClientConnectionOptions) throws -> (login: TDSHandle, connection: TDSHandle) {
