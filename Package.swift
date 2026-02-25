@@ -34,6 +34,9 @@ let package = Package(
             path: "Sources/SQLClientSwift",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency=complete"),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sybdb", .when(platforms: [.linux]))
             ]
         ),
         .testTarget(
