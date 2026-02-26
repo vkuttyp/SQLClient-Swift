@@ -26,3 +26,4 @@ builder:
       linux_packages:
         - freetds-dev
         - pkg-config
+      documentation_targets: [SQLClientSwift]
