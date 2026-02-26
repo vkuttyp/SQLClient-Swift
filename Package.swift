@@ -8,6 +8,7 @@ let hasFreeTDS: Bool = {
     // Manual override for local testing
     if ProcessInfo.processInfo.environment["SKIP_FREETDS"] != nil { return false }
     
+    // 1. Check if the header exists in standard paths.
     let standardPaths = [
         "/opt/homebrew/include/sybdb.h",      // macOS Apple Silicon
         "/usr/local/include/sybdb.h",         // macOS Intel
@@ -15,7 +16,24 @@ let hasFreeTDS: Bool = {
         "/usr/include/freetds/sybdb.h",       // Linux (Alternative)
         "/opt/homebrew/opt/freetds/include/sybdb.h" // Brew opt path
     ]
-    return standardPaths.contains { FileManager.default.fileExists(atPath: $0) }
+    let headerExists = standardPaths.contains { FileManager.default.fileExists(atPath: $0) }
+    guard headerExists else { return false }
+
+    // 2. Check if pkg-config can actually find it. 
+    // If headers exist but pkg-config fails, the systemLibrary target will cause a build failure.
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["pkg-config", "--exists", "freetds"]
+    process.standardOutput = Pipe()
+    process.standardError = Pipe()
+    
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    } catch {
+        return false
+    }
 }()
 
 var packageTargets: [Target] = [
