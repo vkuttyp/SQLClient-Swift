@@ -2,7 +2,9 @@
 // Updated for Swift 6 strict concurrency and FreeTDS compatibility.
 
 import Foundation
+#if FREETDS_FOUND
 import CFreeTDS
+#endif
 
 // MARK: - Notification Names
 
@@ -109,23 +111,23 @@ public struct SQLClientConnectionOptions: Sendable {
 public struct SQLRow: Sendable {
     private let storage: [(key: String, value: Sendable)]
     internal let columnTypes: [String: Int32]
-    
+
     internal init(_ dict: [(key: String, value: Sendable)], columnTypes: [String: Int32]) {
         self.storage = dict
         self.columnTypes = columnTypes
     }
-    
+
     public var columns: [String] { storage.map(\.key) }
-    
+
     public subscript(column: String) -> Sendable? {
         storage.first(where: { $0.key == column })?.value
     }
-    
+
     public subscript(index: Int) -> Sendable? {
         guard index >= 0 && index < storage.count else { return nil }
         return storage[index].value
     }
-    
+
     public func string(_ column: String)  -> String?  { self[column] as? String }
     public func int(_ column: String)     -> Int?     { (self[column] as? NSNumber)?.intValue }
     public func int64(_ column: String)   -> Int64?   { (self[column] as? NSNumber)?.int64Value }
@@ -136,12 +138,10 @@ public struct SQLRow: Sendable {
     public func decimal(_ column: String) -> Decimal? { (self[column] as? NSDecimalNumber)?.decimalValue }
     public func uuid(_ column: String)    -> UUID?    { self[column] as? UUID }
     public func isNull(_ column: String)  -> Bool     { self[column] is NSNull }
-    
+
     public func toDictionary() -> [String: Any] {
         var dict: [String: Any] = [:]
-        for item in storage {
-            dict[item.key] = item.value
-        }
+        for item in storage { dict[item.key] = item.value }
         return dict
     }
 }
@@ -154,29 +154,35 @@ public struct SQLClientResult: Sendable {
 
 // MARK: - Sendable Pointer Wrapper
 
+#if FREETDS_FOUND
 private struct TDSHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 }
+#endif
 
 // MARK: - SQLClient Actor
 
 public actor SQLClient {
     public static let shared = SQLClient()
-    
+
     /// Global debug flag, enabled via --debug argument or SQL_CLIENT_DEBUG env var.
     public static let debugEnabled: Bool = {
         ProcessInfo.processInfo.arguments.contains("--debug") ||
         ProcessInfo.processInfo.environment["SQL_CLIENT_DEBUG"] != nil
     }()
-    
+
+#if FREETDS_FOUND
     private static let initializeFreeTDS: Void = {
         dbinit()
         dberrhandle(SQLClient_errorHandler)
         dbmsghandle(SQLClient_messageHandler)
     }()
+#endif
 
     public init() {
+#if FREETDS_FOUND
         _ = SQLClient.initializeFreeTDS
+#endif
     }
 
     private let queue = DispatchQueue(label: "com.sqlclient.serial")
@@ -187,41 +193,49 @@ public actor SQLClient {
     }
 
     public var maxTextSize: Int = 4096
+
+#if FREETDS_FOUND
     private var login:      OpaquePointer?
     private var connection: OpaquePointer?
-    private var connected   = false
+#endif
+    private var connected = false
 
     public func connect(server: String, username: String? = nil, password: String? = nil, database: String? = nil, domain: String? = nil) async throws {
         try await connect(options: SQLClientConnectionOptions(server: server, username: username, password: password, database: database, domain: domain))
     }
 
-   public func connect(options: SQLClientConnectionOptions) async throws {
-    await awaitPrevious()
-    
-    guard !self.connected else { throw SQLClientError.alreadyConnected }
-    
-    let result: (login: TDSHandle, connection: TDSHandle) = try await {
-        let task: Task<(login: TDSHandle, connection: TDSHandle), Error> = Task {
-            return try await self.runBlocking {
-                return try self._connectSync(options: options)
+    public func connect(options: SQLClientConnectionOptions) async throws {
+        await awaitPrevious()
+        guard !self.connected else { throw SQLClientError.alreadyConnected }
+
+#if FREETDS_FOUND
+        let result: (login: TDSHandle, connection: TDSHandle) = try await {
+            let task: Task<(login: TDSHandle, connection: TDSHandle), Error> = Task {
+                return try await self.runBlocking {
+                    return try self._connectSync(options: options)
+                }
             }
-        }
-        activeTask = Task { _ = await task.result }
-        return try await task.value
-    }()
-    
-    self.login = result.login.pointer
-    self.connection = result.connection.pointer
-    self.connected = true
-   }
+            activeTask = Task { _ = await task.result }
+            return try await task.value
+        }()
+
+        self.login      = result.login.pointer
+        self.connection = result.connection.pointer
+        self.connected  = true
+#else
+        throw SQLClientError.connectionFailed(server: options.server,
+            detail: "FreeTDS not available. Install FreeTDS and rebuild: brew install freetds (macOS) or apt install freetds-dev (Linux).")
+#endif
+    }
 
     public func disconnect() async {
         await awaitPrevious()
-        
         guard self.connected else { return }
-        let lgn = self.login.map { TDSHandle(pointer: $0) }
+
+#if FREETDS_FOUND
+        let lgn  = self.login.map      { TDSHandle(pointer: $0) }
         let conn = self.connection.map { TDSHandle(pointer: $0) }
-        
+
         let task: Task<Void, Never> = Task {
             await self.runBlockingVoid {
                 self._disconnectSync(login: lgn, connection: conn)
@@ -229,20 +243,23 @@ public actor SQLClient {
         }
         activeTask = task
         await task.value
-        
-        self.login = nil
+
+        self.login      = nil
         self.connection = nil
+#endif
         self.connected = false
     }
 
     public func execute(_ sql: String) async throws -> SQLClientResult {
         await awaitPrevious()
-        
-        guard self.connected, let conn = self.connection else { throw SQLClientError.notConnected }
+        guard self.connected else { throw SQLClientError.notConnected }
         guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SQLClientError.noCommandText }
+
+#if FREETDS_FOUND
+        guard let conn = self.connection else { throw SQLClientError.notConnected }
         let maxText = self.maxTextSize
-        let handle = TDSHandle(pointer: conn)
-        
+        let handle  = TDSHandle(pointer: conn)
+
         let task: Task<SQLClientResult, Error> = Task {
             return try await self.runBlocking {
                 return try self._executeSync(sql: sql, connection: handle, maxTextSize: maxText)
@@ -250,6 +267,9 @@ public actor SQLClient {
         }
         activeTask = Task { _ = await task.result }
         return try await task.value
+#else
+        throw SQLClientError.executionFailed(detail: "FreeTDS not available.")
+#endif
     }
 
     public func query(_ sql: String) async throws -> [SQLRow] { try await execute(sql).rows }
@@ -269,80 +289,76 @@ public actor SQLClient {
 
     public var isConnected: Bool { connected }
 
-    // MARK: - Synchronous Helpers
-
-// MARK: - Reachability
+    // MARK: - Reachability
 
     /// Optional pre-flight TCP check. Call this before connect() if you want
     /// to fail fast with a clear error instead of waiting for FreeTDS to time out.
-    /// Not called automatically — integrate tests and CI skip it safely this way.
     public func checkReachability(server: String, port: UInt16 = 1433) async throws {
-    #if os(iOS) || os(macOS) || os(tvOS) || os(visionOS)
-    try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-        queue.async {
-            var readStream:  Unmanaged<CFReadStream>?
-            var writeStream: Unmanaged<CFWriteStream>?
-            CFStreamCreatePairWithSocketToHost(
-                nil, server as CFString, UInt32(port),
-                &readStream, &writeStream
-            )
-            guard let read  = readStream?.takeRetainedValue(),
-                  let write = writeStream?.takeRetainedValue() else {
-                cont.resume(throwing: SQLClientError.connectionFailed(server: server))
-                return
-            }
-            CFReadStreamOpen(read)
-            CFWriteStreamOpen(write)
-
-            let deadline = Date().addingTimeInterval(5)
-            var connected = false
-            while Date() < deadline {
-                if CFReadStreamGetStatus(read)  == .open &&
-                   CFWriteStreamGetStatus(write) == .open {
-                    connected = true
-                    break
+#if os(iOS) || os(macOS) || os(tvOS) || os(visionOS)
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            queue.async {
+                var readStream:  Unmanaged<CFReadStream>?
+                var writeStream: Unmanaged<CFWriteStream>?
+                CFStreamCreatePairWithSocketToHost(
+                    nil, server as CFString, UInt32(port),
+                    &readStream, &writeStream
+                )
+                guard let read  = readStream?.takeRetainedValue(),
+                      let write = writeStream?.takeRetainedValue() else {
+                    cont.resume(throwing: SQLClientError.connectionFailed(server: server))
+                    return
                 }
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-            CFReadStreamOpen(read)
-            CFWriteStreamOpen(write)
+                CFReadStreamOpen(read)
+                CFWriteStreamOpen(write)
 
-            if connected {
-                cont.resume()
-            } else {
-                cont.resume(throwing: SQLClientError.connectionFailed(server: server))
+                let deadline = Date().addingTimeInterval(5)
+                var connected = false
+                while Date() < deadline {
+                    if CFReadStreamGetStatus(read)  == .open &&
+                       CFWriteStreamGetStatus(write) == .open {
+                        connected = true
+                        break
+                    }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                CFReadStreamOpen(read)
+                CFWriteStreamOpen(write)
+
+                if connected {
+                    cont.resume()
+                } else {
+                    cont.resume(throwing: SQLClientError.connectionFailed(server: server))
+                }
             }
         }
+#else
+        // Reachability check not implemented for this platform.
+        return
+#endif
     }
-    #else
-    // Reachability check not implemented for this platform.
-    return
-    #endif
-}
 
+    // MARK: - Private Synchronous Helpers (FreeTDS-dependent)
+
+#if FREETDS_FOUND
     private nonisolated func _connectSync(options: SQLClientConnectionOptions) throws -> (login: TDSHandle, connection: TDSHandle) {
         setLastFreeTDSError("")
         if SQLClient.debugEnabled { print("DEBUG: _connectSync - dblogin()") }
         guard let lgn = dblogin() else { throw SQLClientError.loginAllocationFailed }
 
         if SQLClient.debugEnabled { print("DEBUG: _connectSync - setting login options") }
-        dbsetlname(lgn, options.username ?? "", 2) // DBSETUSER (empty for trusted)
-        if let password = options.password {
-            dbsetlname(lgn, password, 3) // DBSETPWD
-        }
-        dbsetlname(lgn, "SQLClientSwift", 5) // DBSETAPP
-        
-        // Ensure we get UTF-8 from the server for N-types
-        dbsetlname(lgn, "UTF-8", 10) // DBSETCHARSET
+        dbsetlname(lgn, options.username ?? "", 2)  // DBSETUSER
+        if let password = options.password { dbsetlname(lgn, password, 3) }  // DBSETPWD
+        dbsetlname(lgn, "SQLClientSwift", 5)         // DBSETAPP
+        dbsetlname(lgn, "UTF-8", 10)                 // DBSETCHARSET
 
-        if let domain = options.domain { dbsetlname(lgn, domain, 15) } // DBSETLDOMAIN
+        if let domain = options.domain { dbsetlname(lgn, domain, 15) }  // DBSETLDOMAIN
 
-        if let port = options.port { dbsetlshort(lgn, Int32(port), 1006) } // DBSETPORT
-        if options.encryption != .request { dbsetlname(lgn, options.encryption.rawValue, 1005) } // DBSETENCRYPTION
-        dbsetlbool(lgn, options.useNTLMv2 ? 1 : 0, 1002) // DBSETNTLMV2
-        if options.networkAuth { dbsetlbool(lgn, 1, 101) } // DBSETNETWORKAUTH
-        if options.readOnly { dbsetlbool(lgn, 1, 1003) } // DBSETREADONLY
-        if options.useUTF16 { dbsetlbool(lgn, 1, 1001) } // DBSETUTF16
+        if let port = options.port { dbsetlshort(lgn, Int32(port), 1006) }  // DBSETPORT
+        if options.encryption != .request { dbsetlname(lgn, options.encryption.rawValue, 1005) }  // DBSETENCRYPTION
+        dbsetlbool(lgn, options.useNTLMv2 ? 1 : 0, 1002)  // DBSETNTLMV2
+        if options.networkAuth { dbsetlbool(lgn, 1, 101) }   // DBSETNETWORKAUTH
+        if options.readOnly    { dbsetlbool(lgn, 1, 1003) }  // DBSETREADONLY
+        if options.useUTF16    { dbsetlbool(lgn, 1, 1001) }  // DBSETUTF16
         if options.loginTimeout > 0 { dbsetlogintime(Int32(options.loginTimeout)) }
 
         if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbopen(\(options.server))") }
@@ -364,24 +380,22 @@ public actor SQLClient {
                 throw SQLClientError.databaseSelectionFailed(db, detail: detail)
             }
         }
-        
+
         return (TDSHandle(pointer: lgn), TDSHandle(pointer: conn))
     }
 
     private nonisolated func _disconnectSync(login: TDSHandle?, connection: TDSHandle?) {
         if let c = connection?.pointer { dbclose(c) }
-        if let l = login?.pointer { dbloginfree(l) }
+        if let l = login?.pointer      { dbloginfree(l) }
     }
 
     private nonisolated func _executeSync(sql: String, connection: TDSHandle, maxTextSize: Int) throws -> SQLClientResult {
         setLastFreeTDSError("")
         let conn = connection.pointer
-        
-        // Ensure any previous results are cancelled before a new command
+
         dbcancel(conn)
-        
         _ = dbsetopt(conn, DBTEXTSIZE, "\(maxTextSize)", -1)
-        
+
         guard dbcmd(conn, sql) != FAIL, dbsqlexec(conn) != FAIL else {
             throw SQLClientError.executionFailed(detail: getLastFreeTDSError())
         }
@@ -428,30 +442,28 @@ public actor SQLClient {
         guard let dataPtr = dbdata(conn, column) else { return NSNull() }
         let len = dbdatlen(conn, column)
         guard len > 0 else { return NSNull() }
-        
+
         let data = UnsafeRawPointer(dataPtr)
 
         switch Int(type) {
-        case 48: // SYBINT1
+        case 48:  // SYBINT1
             return NSNumber(value: data.load(as: UInt8.self))
-        case 52: // SYBINT2
+        case 52:  // SYBINT2
             return NSNumber(value: data.loadUnaligned(as: Int16.self))
-        case 56: // SYBINT4
+        case 56:  // SYBINT4
             return NSNumber(value: data.loadUnaligned(as: Int32.self))
         case 127: // SYBINT8
             return NSNumber(value: data.loadUnaligned(as: Int64.self))
-        case 59: // SYBREAL
+        case 59:  // SYBREAL
             return NSNumber(value: data.loadUnaligned(as: Float.self))
-        case 62: // SYBFLT8
+        case 62:  // SYBFLT8
             return NSNumber(value: data.loadUnaligned(as: Double.self))
         case 50, 104: // SYBBIT, SYBBITN
             return NSNumber(value: data.load(as: UInt8.self) != 0)
         case 47, 39, 102, 103, 35, 99, 241: // SYBCHAR, SYBVARCHAR, SYBTEXT, SYBNTEXT, SYBXML, SYBNCHAR, SYBNVARCHAR
             let buf = UnsafeBufferPointer<UInt8>(start: data.assumingMemoryBound(to: UInt8.self), count: Int(len))
-            // Try UTF-8 first, then windowsCP1252 as fallback
-            if let str = String(bytes: buf, encoding: .utf8) { return str }
-            if let str = String(bytes: buf, encoding: .windowsCP1252) { return str }
-            // If it's UCS-2 (type 103/SYBNVARCHAR usually), try UTF-16
+            if let str = String(bytes: buf, encoding: .utf8)              { return str }
+            if let str = String(bytes: buf, encoding: .windowsCP1252)     { return str }
             if let str = String(bytes: buf, encoding: .utf16LittleEndian) { return str }
             return ""
         case 45, 37, 34, 173, 174, 167: // SYBBINARY, SYBVARBINARY, SYBIMAGE, SYBBIGBINARY, SYBBIGVARBINARY, SYBBLOB
@@ -466,14 +478,12 @@ public actor SQLClient {
             guard len == 16 else { return NSNull() }
             var bytes = [UInt8](repeating: 0, count: 16)
             memcpy(&bytes, dataPtr, 16)
-            
-            // SQL Server UniqueIdentifier mixed-endian -> RFC 4122 Big-Endian
             let swapped: [UInt8] = [
                 bytes[3], bytes[2], bytes[1], bytes[0],
                 bytes[5], bytes[4],
                 bytes[7], bytes[6],
-                bytes[8], bytes[9],
-                bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+                bytes[8],  bytes[9],  bytes[10], bytes[11],
+                bytes[12], bytes[13], bytes[14], bytes[15]
             ]
             return NSUUID(uuidBytes: swapped) as UUID
         case 31: // SYBVOID
@@ -486,7 +496,7 @@ public actor SQLClient {
     private nonisolated func legacyDate(conn: OpaquePointer, type: Int32, data: UnsafeRawPointer, len: Int32) -> Sendable {
         var dbdt = DBDATETIME()
         _ = withUnsafeMutableBytes(of: &dbdt) { ptr in
-            dbconvert(conn, type, data, len, 61, // SYBDATETIME
+            dbconvert(conn, type, data, len, 61,
                       ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
                       Int32(MemoryLayout<DBDATETIME>.size))
         }
@@ -501,11 +511,10 @@ public actor SQLClient {
 
     private nonisolated func msDateTime(conn: OpaquePointer, type: Int32, data: UnsafeRawPointer, len: Int32) -> Sendable {
         var buf = [CChar](repeating: 0, count: 65)
-        let count = Int32(64) // Leave last byte as null
         let rc = buf.withUnsafeMutableBytes { ptr in
-            dbconvert(conn, type, data, len, 47, // SYBCHAR
+            dbconvert(conn, type, data, len, 47,
                       ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                      count)
+                      Int32(64))
         }
         guard rc != FAIL else { return NSNull() }
         let str = String(cString: buf).trimmingCharacters(in: .whitespaces)
@@ -515,17 +524,20 @@ public actor SQLClient {
 
     private nonisolated func convertToDecimal(conn: OpaquePointer, type: Int32, data: UnsafeRawPointer, len: Int32) -> Sendable {
         var buf = [CChar](repeating: 0, count: 65)
-        let count = Int32(64) // Leave last byte as null
         _ = buf.withUnsafeMutableBytes { ptr in
-            dbconvert(conn, type, data, len, 47, // SYBCHAR
+            dbconvert(conn, type, data, len, 47,
                       ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                      count)
+                      Int32(64))
         }
         return NSDecimalNumber(string: String(cString: buf).trimmingCharacters(in: .whitespaces))
     }
+#endif // FREETDS_FOUND
+
+    // MARK: - Pure Swift Helpers (no FreeTDS dependency)
 
     private static let isoFormatters: [DateFormatter] = {
-        ["yyyy-MM-dd HH:mm:ss.SSSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd", "HH:mm:ss.SSSSSSS", "HH:mm:ss"].map {
+        ["yyyy-MM-dd HH:mm:ss.SSSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss",
+         "yyyy-MM-dd", "HH:mm:ss.SSSSSSS", "HH:mm:ss"].map {
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
             df.dateFormat = $0
@@ -548,9 +560,9 @@ public actor SQLClient {
     private static func sqlLiteral(for value: Any?) -> String {
         guard let value = value else { return "NULL" }
         switch value {
-        case let s as String: return "'" + s.replacingOccurrences(of: "'", with: "''") + "'"
+        case let s as String:   return "'" + s.replacingOccurrences(of: "'", with: "''") + "'"
         case let n as NSNumber: return n.stringValue
-        case let u as UUID: return "'" + u.uuidString + "'"
+        case let u as UUID:     return "'" + u.uuidString + "'"
         case let d as Date:
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
@@ -584,21 +596,49 @@ public actor SQLClient {
     }
 }
 
-private func SQLClient_errorHandler(dbproc: OpaquePointer?, severity: Int32, dberr: Int32, oserr: Int32, dberrstr: UnsafeMutablePointer<CChar>?, oserrstr: UnsafeMutablePointer<CChar>?) -> Int32 {
+// MARK: - FreeTDS C Callbacks (file-scope, C-compatible)
+
+#if FREETDS_FOUND
+private func SQLClient_errorHandler(
+    dbproc: OpaquePointer?,
+    severity: Int32,
+    dberr: Int32,
+    oserr: Int32,
+    dberrstr: UnsafeMutablePointer<CChar>?,
+    oserrstr: UnsafeMutablePointer<CChar>?
+) -> Int32 {
     let msg = dberrstr.map { String(cString: $0) } ?? "Unknown FreeTDS error"
     setLastFreeTDSError("[\(dberr)] \(msg)")
     if SQLClient.debugEnabled {
         print("DEBUG SQL Error: [\(dberr)] \(msg) (severity: \(severity))")
     }
-    NotificationCenter.default.post(name: .SQLClientMessage, object: nil, userInfo: [SQLClientMessageKey.code: Int(dberr), SQLClientMessageKey.message: msg, SQLClientMessageKey.severity: Int(severity)])
+    NotificationCenter.default.post(
+        name: .SQLClientMessage, object: nil,
+        userInfo: [SQLClientMessageKey.code:     Int(dberr),
+                   SQLClientMessageKey.message:  msg,
+                   SQLClientMessageKey.severity: Int(severity)])
     return 1 // INT_CANCEL
 }
 
-private func SQLClient_messageHandler(dbproc: OpaquePointer?, msgno: DBINT, msgstate: Int32, severity: Int32, msgtext: UnsafeMutablePointer<CChar>?, srvname: UnsafeMutablePointer<CChar>?, proc: UnsafeMutablePointer<CChar>?, line: Int32) -> Int32 {
+private func SQLClient_messageHandler(
+    dbproc: OpaquePointer?,
+    msgno: DBINT,
+    msgstate: Int32,
+    severity: Int32,
+    msgtext: UnsafeMutablePointer<CChar>?,
+    srvname: UnsafeMutablePointer<CChar>?,
+    proc: UnsafeMutablePointer<CChar>?,
+    line: Int32
+) -> Int32 {
     let msg = msgtext.map { String(cString: $0) } ?? ""
     if severity > 0 && SQLClient.debugEnabled {
         print("DEBUG SQL Message: [\(msgno)] \(msg) (severity: \(severity))")
     }
-    NotificationCenter.default.post(name: .SQLClientMessage, object: nil, userInfo: [SQLClientMessageKey.code: Int(msgno), SQLClientMessageKey.message: msg, SQLClientMessageKey.severity: Int(severity)])
+    NotificationCenter.default.post(
+        name: .SQLClientMessage, object: nil,
+        userInfo: [SQLClientMessageKey.code:     Int(msgno),
+                   SQLClientMessageKey.message:  msg,
+                   SQLClientMessageKey.severity: Int(severity)])
     return 0
 }
+#endif // FREETDS_FOUND

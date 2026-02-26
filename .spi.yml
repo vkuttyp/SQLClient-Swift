@@ -1,27 +1,5 @@
 version: 1
 builder:
   configs:
-    # Linux builds — apt-install FreeTDS before building.
-    # macOS builds are excluded: SPI's macOS runners cannot pre-install
-    # Homebrew packages, so pkg-config cannot locate FreeTDS at build time.
-    # macOS users install via: brew install freetds
+    - platform: macos-spm
     - platform: linux
-      swift_version: '5.10'
-      linux_packages:
-        - freetds-dev
-        - pkg-config
-    - platform: linux
-      swift_version: '6.0'
-      linux_packages:
-        - freetds-dev
-        - pkg-config
-    - platform: linux
-      swift_version: '6.1'
-      linux_packages:
-        - freetds-dev
-        - pkg-config
-    - platform: linux
-      swift_version: '6.2'
-      linux_packages:
-        - freetds-dev
-        - pkg-config

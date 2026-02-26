@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>logFormatVersion</key>
+	<integer>12</integer>
+	<key>logs</key>
+	<dict>
+		<key>AF450D3A-F6F0-4E0C-9F2C-FB527325C2C4</key>
+		<dict>
+			<key>className</key>
+			<string>IDECommandLineBuildLog</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
+			<key>fileName</key>
+			<string>AF450D3A-F6F0-4E0C-9F2C-FB527325C2C4.xcactivitylog</string>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>S</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>0</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>0</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>SQLClient-Swift</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>SQLClientSwift</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Building workspace SQLClient-Swift with scheme SQLClientSwift</string>
+			<key>timeStartedRecording</key>
+			<real>793767299.14362204</real>
+			<key>timeStoppedRecording</key>
+			<real>793767322.727705</real>
+			<key>title</key>
+			<string>Building workspace SQLClient-Swift with scheme SQLClientSwift</string>
+			<key>uniqueIdentifier</key>
+			<string>AF450D3A-F6F0-4E0C-9F2C-FB527325C2C4</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

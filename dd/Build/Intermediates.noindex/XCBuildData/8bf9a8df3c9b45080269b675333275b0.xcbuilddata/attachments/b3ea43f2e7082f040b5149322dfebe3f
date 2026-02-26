@@ -1,0 +1,4 @@
+module SQLClientSwift {
+header "SQLClientSwift-Swift.h"
+export *
+}

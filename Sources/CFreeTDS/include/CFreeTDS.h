@@ -1,9 +1,7 @@
-#ifndef CFREETDS_H
-#define CFREETDS_H
-
 #pragma once
+
+// Wrapper header for FreeTDS / libsybdb.
+// This module is only included in the package graph if sybdb.h is detected.
 
 #include <sybdb.h>
 #include <sybfront.h>
-
-#endif /* CFREETDS_H */

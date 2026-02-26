@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'SQLClientSwift' in project 'SQLClientSwift'
+➜ Explicit dependency on target 'SQLClientSwift' in project 'SQLClientSwift'
+Target 'SQLClientSwift' in project 'SQLClientSwift' (no dependencies)
