@@ -19,6 +19,7 @@ This is a Swift rewrite and modernisation of [martinrybak/SQLClient](https://git
 - **Typed `SQLRow`** — access columns as `String`, `Int`, `Date`, `UUID`, `Decimal`, and more
 - **`SQLDataTable` & `SQLDataSet`** — typed, named tables with JSON serialisation and Markdown rendering
 - **Full TLS support** — `off`, `request`, `require`, and `strict` (TDS 8.0 / Azure SQL)
+- **Windows Authentication** — support for NTLMv2 and Domain-integrated security
 - **FreeTDS 1.5** — NTLMv2, read-only AG routing, Kerberos auth, IPv6, cluster failover
 - **Affected-row counts** — `rowsAffected` from `INSERT` / `UPDATE` / `DELETE`
 - **Parameterised queries** — built-in SQL injection protection via `?` placeholders
@@ -46,7 +47,13 @@ This is a Swift rewrite and modernisation of [martinrybak/SQLClient](https://git
 > **Note for macOS:** If you encounter compilation errors like `'sybdb.h' file not found`, you need to configure `pkg-config` to correctly link your FreeTDS installation. See [PKG-Config Configuration](#pkg-config-configuration) below.
 
 ### Swift Package Manager
-...
+
+Add the following to your `Package.swift` dependencies:
+
+```swift
+.package(url: "https://github.com/vkuttyp/SQLClient-Swift.git", from: "1.1.3")
+```
+
 **macOS (Homebrew):**
 ```bash
 brew install freetds
@@ -134,22 +141,47 @@ try await client.connect(
 )
 ```
 
-For advanced options, use `SQLClientConnectionOptions`:
+#### Windows Authentication (Domain Login)
+
+To connect using Windows credentials, provide the `domain` parameter:
 
 ```swift
-var options = SQLClientConnectionOptions(
-    server:   "myserver.database.windows.net",
-    username: "myuser",
-    password: "mypassword",
-    database: "MyDatabase"
+try await client.connect(
+    server:   "myserver",
+    username: "windows_user",
+    password: "windows_password",
+    domain:   "YOUR_DOMAIN"
 )
+```
+
+#### Advanced Connection Options
+
+Use `SQLClientConnectionOptions` for full control over the connection:
+
+```swift
+var options = SQLClientConnectionOptions(server: "myserver")
+options.username      = "myuser"
+options.password      = "mypassword"
+options.database      = "MyDatabase"
+options.domain        = "CORP"      // Set domain for Windows Auth
 options.port          = 1433
-options.encryption    = .strict    // required for Azure SQL / SQL Server 2022
-options.loginTimeout  = 10        // seconds
-options.queryTimeout  = 30        // seconds
-options.readOnly      = true      // connect to an Availability Group read replica
+options.encryption    = .strict    // Required for Azure SQL / SQL Server 2022
+options.loginTimeout  = 10         // Timeout for establishing connection (seconds)
+options.queryTimeout  = 30         // Timeout for statement execution (seconds)
+options.readOnly      = true       // ApplicationIntent=ReadOnly (for AG replicas)
+options.useNTLMv2     = true       // Default is true
+options.networkAuth   = true       // Enable network authentication (trusted connection)
+options.useUTF16      = true       // Use UTF-16 for N-types communication
 
 try await client.connect(options: options)
+```
+
+### Pre-flight Reachability Check
+
+You can optionally check if the SQL Server port is reachable before attempting a full login. This is useful for failing fast with a clear error:
+
+```swift
+try await client.checkReachability(server: "myserver", port: 1433)
 ```
 
 ### Querying — `SQLRow`
