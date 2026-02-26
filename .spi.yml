@@ -2,4 +2,27 @@ version: 1
 builder:
   configs:
     - platform: macos-spm
+    - platform: macos-xcodebuild
+    - platform: ios
+    - platform: tvos
+    - platform: visionos
     - platform: linux
+      swift_version: '5.10'
+      linux_packages:
+        - freetds-dev
+        - pkg-config
+    - platform: linux
+      swift_version: '6.0'
+      linux_packages:
+        - freetds-dev
+        - pkg-config
+    - platform: linux
+      swift_version: '6.1'
+      linux_packages:
+        - freetds-dev
+        - pkg-config
+    - platform: linux
+      swift_version: '6.2'
+      linux_packages:
+        - freetds-dev
+        - pkg-config
