@@ -37,7 +37,7 @@ final class SQLBCPTests: XCTestCase {
             rows.append(SQLRow(storage, columnTypes: ["Id": 56, "Name": 39, "Value": 62]))
         }
 
-        let inserted = try await client.bulkInsert(table: "tempdb..BCPTest", rows: rows)
+        let inserted = try await client.bulkInsert(table: "BCPTest", rows: rows)
         XCTAssertEqual(inserted, 100)
 
         let countRows = try await client.query("SELECT COUNT(*) as cnt FROM BCPTest")
