@@ -149,7 +149,16 @@ public struct SQLRow: Sendable {
 public struct SQLClientResult: Sendable {
     public let tables: [[SQLRow]]
     public let rowsAffected: Int
+    public let outputParameters: [String: Sendable]
+    public let returnStatus: Int?
     public var rows: [SQLRow] { tables.first ?? [] }
+
+    internal init(tables: [[SQLRow]], rowsAffected: Int, outputParameters: [String: Sendable] = [:], returnStatus: Int? = nil) {
+        self.tables = tables
+        self.rowsAffected = rowsAffected
+        self.outputParameters = outputParameters
+        self.returnStatus = returnStatus
+    }
 }
 
 // MARK: - Sendable Pointer Wrapper
@@ -402,6 +411,8 @@ public actor SQLClient {
 
         var tables: [[SQLRow]] = []
         var totalAffected: Int = -1
+        var outputParams: [String: Sendable] = [:]
+        var returnStatus: Int?
         var resultCode = dbresults(conn)
 
         while resultCode != NO_MORE_RESULTS && resultCode != FAIL {
@@ -432,17 +443,47 @@ public actor SQLClient {
                     table.append(SQLRow(storage, columnTypes: columnTypes))
                 }
             }
-            tables.append(table)
+            if !table.isEmpty {
+                tables.append(table)
+            }
+            
+            // Check for output parameters and return status after each result set
+            let numRets = Int(dbnumrets(conn))
+            if numRets > 0 {
+                for i in 1...numRets {
+                    let idx = Int32(i)
+                    if let namePtr = dbretname(conn, idx) {
+                        let name = String(cString: namePtr)
+                        let type = dbrettype(conn, idx)
+                        outputParams[name] = returnValue(conn: conn, index: idx, type: type)
+                    }
+                }
+            }
+            if dbhasretstat(conn) != 0 {
+                returnStatus = Int(dbretstatus(conn))
+            }
+
             resultCode = dbresults(conn)
         }
-        return SQLClientResult(tables: tables, rowsAffected: totalAffected)
+
+        return SQLClientResult(tables: tables, rowsAffected: totalAffected, outputParameters: outputParams, returnStatus: returnStatus)
     }
 
     private nonisolated func columnValue(conn: OpaquePointer, column: Int32, type: Int32) -> Sendable {
         guard let dataPtr = dbdata(conn, column) else { return NSNull() }
         let len = dbdatlen(conn, column)
         guard len > 0 else { return NSNull() }
+        return extractValue(conn: conn, type: type, dataPtr: dataPtr, len: len)
+    }
 
+    private nonisolated func returnValue(conn: OpaquePointer, index: Int32, type: Int32) -> Sendable {
+        guard let dataPtr = dbretdata(conn, index) else { return NSNull() }
+        let len = dbretlen(conn, index)
+        guard len > 0 else { return NSNull() }
+        return extractValue(conn: conn, type: type, dataPtr: dataPtr, len: len)
+    }
+
+    private nonisolated func extractValue(conn: OpaquePointer, type: Int32, dataPtr: UnsafeMutablePointer<BYTE>, len: Int32) -> Sendable {
         let data = UnsafeRawPointer(dataPtr)
 
         switch Int(type) {
@@ -631,7 +672,7 @@ private func SQLClient_messageHandler(
     line: Int32
 ) -> Int32 {
     let msg = msgtext.map { String(cString: $0) } ?? ""
-    if severity > 0 && SQLClient.debugEnabled {
+    if SQLClient.debugEnabled {
         print("DEBUG SQL Message: [\(msgno)] \(msg) (severity: \(severity))")
     }
     NotificationCenter.default.post(
