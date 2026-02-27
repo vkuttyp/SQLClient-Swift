@@ -13,6 +13,9 @@ SQLClient-Swift provides a clean, asynchronous API for interacting with SQL Serv
 - **Type Safety**: Automatic mapping of database rows to Swift `Decodable` types.
 - **Thread Safety**: Uses Swift actors to ensure safe concurrent access to database connections.
 - **Full Encryption Support**: Supports TLS/SSL for Azure SQL and modern SQL Server instances.
+- **Stored Procedures**: Full support for Remote Procedure Calls (RPC) with output parameters.
+- **Bulk Copy (BCP)**: High-performance data ingestion for large datasets.
+- **Connection Pooling**: Built-in support for managing reusable connection pools.
 
 ## Topics
 
@@ -22,3 +25,11 @@ SQLClient-Swift provides a clean, asynchronous API for interacting with SQL Serv
 - ``SQLClientConnectionOptions``
 - ``SQLClientResult``
 - ``SQLRow``
+- ``SQLParameter``
+
+### Advanced Features
+
+- ``SQLClientPool``
+- <doc:Transactions>
+- <doc:BulkInsert>
+- <doc:RPC>
