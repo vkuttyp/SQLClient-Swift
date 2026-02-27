@@ -43,7 +43,7 @@ var packageTargets: [Target] = [
         path: "Sources/SQLClientSwift",
         swiftSettings: [
             .enableExperimentalFeature("StrictConcurrency=complete"),
-        ] + (hasFreeTDS ? [.define("FREETDS_FOUND")] : []),
+        ] + (hasFreeTDS ? [.define("FREETDS_FOUND"), .define("DBBCP")] : []),
         linkerSettings: [
             .linkedLibrary("sybdb", .when(platforms: [.linux]))
         ]

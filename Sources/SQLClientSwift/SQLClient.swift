@@ -20,19 +20,19 @@ public enum SQLClientMessageKey {
 
 // MARK: - Error Capture
 
-nonisolated(unsafe) private var lastFreeTDSError: String?
+nonisolated(unsafe) private var lastFreeTDSErrorStr: String?
 private let lastErrorLock = NSLock()
 
 private func setLastFreeTDSError(_ msg: String) {
     lastErrorLock.lock()
-    lastFreeTDSError = msg
+    lastFreeTDSErrorStr = msg
     lastErrorLock.unlock()
 }
 
 private func getLastFreeTDSError() -> String? {
     lastErrorLock.lock()
     defer { lastErrorLock.unlock() }
-    return lastFreeTDSError
+    return lastFreeTDSErrorStr
 }
 
 // MARK: - Errors
@@ -146,6 +146,18 @@ public struct SQLRow: Sendable {
     }
 }
 
+public struct SQLParameter: Sendable {
+    public let name: String?
+    public let value: Sendable?
+    public let isOutput: Bool
+
+    public init(name: String? = nil, value: Sendable? = nil, isOutput: Bool = false) {
+        self.name = name
+        self.value = value
+        self.isOutput = isOutput
+    }
+}
+
 public struct SQLClientResult: Sendable {
     public let tables: [[SQLRow]]
     public let rowsAffected: Int
@@ -164,7 +176,7 @@ public struct SQLClientResult: Sendable {
 // MARK: - Sendable Pointer Wrapper
 
 #if FREETDS_FOUND
-private struct TDSHandle: @unchecked Sendable {
+internal struct TDSHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 }
 #endif
@@ -197,16 +209,26 @@ public actor SQLClient {
     private let queue = DispatchQueue(label: "com.sqlclient.serial")
     private var activeTask: Task<Void, Never>?
 
-    private func awaitPrevious() async {
+    internal func awaitPrevious() async {
         _ = await activeTask?.result
     }
 
-    public var maxTextSize: Int = 4096
+    internal func setActiveTask(_ task: Task<Void, Never>) {
+        self.activeTask = task
+    }
 
 #if FREETDS_FOUND
     private var login:      OpaquePointer?
     private var connection: OpaquePointer?
+    
+    internal var connectionHandle: OpaquePointer? { connection }
+    
+    public nonisolated func getLastError() -> String? {
+        getLastFreeTDSError()
+    }
 #endif
+
+    public var maxTextSize: Int = 4096
     private var connected = false
 
     public func connect(server: String, username: String? = nil, password: String? = nil, database: String? = nil, domain: String? = nil) async throws {
@@ -291,6 +313,10 @@ public actor SQLClient {
     @discardableResult
     public func run(_ sql: String) async throws -> Int { try await execute(sql).rowsAffected }
 
+    public func beginTransaction() async throws { try await run("BEGIN TRANSACTION") }
+    public func commitTransaction() async throws { try await run("COMMIT TRANSACTION") }
+    public func rollbackTransaction() async throws { try await run("ROLLBACK TRANSACTION") }
+
     public func execute(_ sql: String, parameters: [Any?]) async throws -> SQLClientResult {
         let built = try SQLClient.buildSQL(sql, parameters: parameters)
         return try await execute(built)
@@ -370,6 +396,8 @@ public actor SQLClient {
         if options.useUTF16    { dbsetlbool(lgn, 1, 1001) }  // DBSETUTF16
         if options.loginTimeout > 0 { dbsetlogintime(Int32(options.loginTimeout)) }
 
+        dbsetlbool(lgn, 1, 6) // DBSETBCP = 6
+
         if SQLClient.debugEnabled { print("DEBUG: _connectSync - dbopen(\(options.server))") }
         guard let conn = dbopen(lgn, options.server) else {
             let detail = getLastFreeTDSError()
@@ -398,7 +426,7 @@ public actor SQLClient {
         if let l = login?.pointer      { dbloginfree(l) }
     }
 
-    private nonisolated func _executeSync(sql: String, connection: TDSHandle, maxTextSize: Int) throws -> SQLClientResult {
+    internal nonisolated func _executeSync(sql: String, connection: TDSHandle, maxTextSize: Int) throws -> SQLClientResult {
         setLastFreeTDSError("")
         let conn = connection.pointer
 
@@ -469,21 +497,21 @@ public actor SQLClient {
         return SQLClientResult(tables: tables, rowsAffected: totalAffected, outputParameters: outputParams, returnStatus: returnStatus)
     }
 
-    private nonisolated func columnValue(conn: OpaquePointer, column: Int32, type: Int32) -> Sendable {
+    internal nonisolated func columnValue(conn: OpaquePointer, column: Int32, type: Int32) -> Sendable {
         guard let dataPtr = dbdata(conn, column) else { return NSNull() }
         let len = dbdatlen(conn, column)
         guard len > 0 else { return NSNull() }
         return extractValue(conn: conn, type: type, dataPtr: dataPtr, len: len)
     }
 
-    private nonisolated func returnValue(conn: OpaquePointer, index: Int32, type: Int32) -> Sendable {
+    internal nonisolated func returnValue(conn: OpaquePointer, index: Int32, type: Int32) -> Sendable {
         guard let dataPtr = dbretdata(conn, index) else { return NSNull() }
         let len = dbretlen(conn, index)
         guard len > 0 else { return NSNull() }
         return extractValue(conn: conn, type: type, dataPtr: dataPtr, len: len)
     }
 
-    private nonisolated func extractValue(conn: OpaquePointer, type: Int32, dataPtr: UnsafeMutablePointer<BYTE>, len: Int32) -> Sendable {
+    internal nonisolated func extractValue(conn: OpaquePointer, type: Int32, dataPtr: UnsafeMutablePointer<BYTE>, len: Int32) -> Sendable {
         let data = UnsafeRawPointer(dataPtr)
 
         switch Int(type) {
@@ -601,7 +629,6 @@ public actor SQLClient {
     private static func sqlLiteral(for value: Any?) -> String {
         guard let value = value else { return "NULL" }
         switch value {
-        case let s as String:   return "'" + s.replacingOccurrences(of: "'", with: "''") + "'"
         case let n as NSNumber: return n.stringValue
         case let u as UUID:     return "'" + u.uuidString + "'"
         case let d as Date:
@@ -610,11 +637,12 @@ public actor SQLClient {
             df.dateFormat = "yyyy-MM-dd HH:mm:ss"
             return "'" + df.string(from: d) + "'"
         case is NSNull: return "NULL"
+        case let s as String:   return "'" + s.replacingOccurrences(of: "'", with: "''") + "'"
         default: return "'" + "\(value)".replacingOccurrences(of: "'", with: "''") + "'"
         }
     }
 
-    private func runBlocking<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
+    internal func runBlocking<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 do {
@@ -627,7 +655,7 @@ public actor SQLClient {
         }
     }
 
-    private func runBlockingVoid(_ body: @Sendable @escaping () -> Void) async {
+    internal func runBlockingVoid(_ body: @Sendable @escaping () -> Void) async {
         await withCheckedContinuation { continuation in
             queue.async {
                 body()

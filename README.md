@@ -22,7 +22,11 @@ This is a Swift rewrite and modernisation of [martinrybak/SQLClient](https://git
 - **Windows Authentication** — support for NTLMv2 and Domain-integrated security
 - **FreeTDS 1.5** — NTLMv2, read-only AG routing, Kerberos auth, IPv6, cluster failover
 - **Affected-row counts** — `rowsAffected` from `INSERT` / `UPDATE` / `DELETE`
-- **Parameterised queries** — built-in SQL injection protection via `?` placeholders
+- **Remote Procedure Calls (RPC)** — efficient stored procedure execution with full `OUTPUT` parameter and return status support
+- **Explicit Transactions** — `beginTransaction()`, `commitTransaction()`, and `rollbackTransaction()`
+- **Bulk Copy (BCP)** — high-performance `bulkInsert()` for large data sets
+- **Connection Pooling** — built-in `SQLClientPool` for high-concurrency applications
+- **Parameterised queries** — built-in SQL injection protection via `?` placeholders or `executeParameterized()`
 - **All SQL Server date types** — `date`, `time`, `datetime2`, `datetimeoffset` as native `Date`
 - **Swift Package Manager** — single dependency, no Ruby tooling required
 
@@ -126,6 +130,26 @@ await client.disconnect()
 
 ---
 
+## Connection Pooling
+
+For server-side applications with high concurrency, use `SQLClientPool` to manage a pool of reusable connections:
+
+```swift
+let options = SQLClientConnectionOptions(server: "myserver", username: "sa", password: "pwd")
+let pool = SQLClientPool(options: options, maxPoolSize: 10)
+
+// Use a client from the pool
+try await pool.withClient { client in
+    let rows = try await client.query("SELECT GETDATE()")
+    print(rows[0])
+}
+
+// Disconnect all clients when shutting down
+await pool.disconnectAll()
+```
+
+---
+
 ## Usage
 
 ### Connecting
@@ -203,6 +227,9 @@ for row in rows {
     if row.isNull("DiscontinuedDate") {
         print("\(name ?? "") is still available")
     }
+    
+    // Convert the entire row to a dictionary
+    let dict = row.toDictionary()
 }
 ```
 
@@ -214,20 +241,17 @@ let firstColumn = row[0]
 
 ### Querying — `Decodable` Mapping
 
-Map rows directly to your own `Decodable` structs. Column name matching is **case-insensitive** and handles `snake_case` ↔ `camelCase` automatically:
+Map rows directly to your own `Decodable` structs. Column name matching is **case-insensitive** and handles `snake_case` ↔ `camelCase` automatically. It also supports automatic conversion from `String` to primitive types, `Date`, `URL`, and `Decimal`:
 
 ```swift
-struct Product: Decodable {
-    let productID: Int
-    let name: String
-    let price: Decimal
-    let dateAdded: Date
+struct UserProfile: Decodable {
+    let userID: Int           // matches "user_id" or "UserID"
+    let displayName: String   // matches "display_name"
+    let website: URL?         // automatically converted from string
+    let balance: Decimal      // automatically converted
 }
 
-// "product_id", "ProductID", and "productId" all match the `productID` property
-let products: [Product] = try await client.query(
-    "SELECT product_id, name, price, date_added FROM Products"
-)
+let profiles: [UserProfile] = try await client.query("SELECT * FROM UserProfiles")
 ```
 
 ### Executing — `SQLClientResult`
@@ -256,6 +280,43 @@ let affected = try await client.run(
 print("\(affected) row(s) updated")
 ```
 
+### Explicit Transactions
+
+Wrap multiple operations in a transaction to ensure atomicity:
+
+```swift
+try await client.beginTransaction()
+do {
+    try await client.run("INSERT INTO Orders ...")
+    try await client.run("UPDATE Inventory ...")
+    try await client.commitTransaction()
+} catch {
+    try await client.rollbackTransaction()
+    throw error
+}
+```
+
+### Stored Procedures (RPC)
+
+The `executeRPC` method is the most efficient way to call stored procedures and correctly supports `OUTPUT` parameters and return status:
+
+```swift
+let params = [
+    SQLParameter(name: "@InVal",  value: 42),
+    SQLParameter(name: "@OutVal", value: 0, isOutput: true)
+]
+
+let result = try await client.executeRPC("MyStoredProc", parameters: params)
+
+// Access output parameters by name
+if let doubled = result.outputParameters["@OutVal"] as? NSNumber {
+    print("Doubled value:", doubled.intValue)
+}
+
+// Access return status
+print("Procedure returned:", result.returnStatus ?? 0)
+```
+
 ### Parameterised Queries
 
 Use `?` placeholders to pass values safely. Strings are automatically escaped to prevent SQL injection:
@@ -280,7 +341,36 @@ try await client.run(
 )
 ```
 
-> **Note:** This uses string-level escaping (single-quote doubling). For maximum security with untrusted user input, prefer stored procedures.
+> **Note:** This uses string-level escaping (single-quote doubling). For maximum security or output parameters in ad-hoc queries, use `executeParameterized()`:
+
+```swift
+let params = [
+    SQLParameter(name: "@UserID", value: 42),
+    SQLParameter(name: "@Msg",    value: "Hello World")
+]
+let result = try await client.executeParameterized(
+    "SELECT * FROM Users WHERE ID = @UserID; PRINT @Msg",
+    parameters: params
+)
+```
+
+### Bulk Insert (BCP)
+
+For high-performance loading of thousands of rows, use the Bulk Copy (BCP) interface:
+
+```swift
+var rows: [SQLRow] = []
+for i in 1...1000 {
+    let storage: [(key: String, value: Sendable)] = [
+        (key: "ID",   value: i),
+        (key: "Name", value: "Bulk User \(i)")
+    ]
+    rows.append(SQLRow(storage, columnTypes: [:]))
+}
+
+let inserted = try await client.bulkInsert(table: "LargeTable", rows: rows)
+print("Bulk inserted \(inserted) rows")
+```
 
 ### SQLDataTable & SQLDataSet
 
@@ -389,10 +479,14 @@ print(ds.count) // number of tables
 
 #### Backward compatibility
 
-`SQLDataTable` can be converted back to `[SQLRow]` if you need to pass it to existing code:
+`SQLDataTable` can be converted back to `[SQLRow]` if you need to pass it to existing code or use `bulkInsert` with a table you just fetched:
 
 ```swift
 let sqlRows: [SQLRow] = table.toSQLRows()
+
+// Example: fetch from one table and bulk insert into another
+let table = try await client.dataTable("SELECT * FROM SourceTable")
+try await client.bulkInsert(table: "TargetTable", rows: table.toSQLRows())
 ```
 
 ### Error Handling
@@ -517,10 +611,9 @@ Set the `TDSVER` environment variable in your Xcode scheme (**Edit Scheme → Ru
 
 ## Known Limitations
 
-- **Stored procedure OUTPUT parameters** are not yet supported. Stored procedures that return result sets via `SELECT` work normally.
-- **Connection pooling** is not built in. For high-concurrency server-side apps, create multiple `SQLClient` instances manually.
 - **Single-space strings:** FreeTDS may return `""` instead of `" "` in some server configurations (upstream FreeTDS bug).
 - **`sql_variant`**, **`cursor`**, and **`table`** SQL Server types are not supported.
+- **BCP with Unicode:** `bulkInsert` currently works best with standard `VARCHAR` columns.
 
 ---
 
